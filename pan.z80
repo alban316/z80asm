@@ -1,0 +1,126 @@
+;Pick-a-Number
+;My 3rd Assembly program ever.
+;My first original assembly program ever.
+
+
+theNumber EQU $8200
+rawInput EQU $8210
+numTries EQU $8220
+intInput EQU $8221
+gameOver EQU $8222
+
+.ORG $8000
+
+	LD A, $05				;prototype theNumber is hard-coded as 5
+	LD (theNumber), A
+	LD A, $05				;numTries will be 5. This code is only redundant due to init of theNumber which is not permanent
+	LD (numTries), A
+	LD A, $00
+	LD (gameOver), A
+	LD DE, messageStart
+	CALL outputLine
+
+
+mainLoop:
+	CALL getGuess
+	CALL evalGuess
+	
+	;Check for gameover coming out of eval
+	LD A, (gameOver)
+	CP $01
+	RET Z					;Return to OS
+	
+	;Evaluate tries remaining
+	LD A, (numTries)
+	DEC A					
+	CP $0					;if A == 0
+	JP Z, noMoreGuesses		;then show loss message 
+	RET Z					;...and then exit to OS
+	LD (numTries), A		;Otherwise, update numTries
+	JP mainLoop				;Repeat
+
+evalGuess:
+	LD A, (intInput)
+	LD B, A                 ;Indirectly load B with intInput
+	LD A, (theNumber)
+	CP B        			;If A == B flags => status (A-B)
+	JP Z, correctGuess      ;A - B = 0
+	JP NC, highGuess		;A - B = negative
+	JP C, lowGuess			;A - B = positive
+	
+correctGuess: 			
+	LD DE, messageWin
+	CALL outputLine
+	LD A, $01
+	LD (gameOver), A
+	RET
+
+highGuess:
+	LD DE, messageHigher
+	CALL outputLine
+	RET
+	
+lowGuess:	
+	LD DE, messageLower
+	CALL outputLine
+	RET
+
+noMoreGuesses:
+	LD DE, messageLoss
+	CALL outputLine
+	RET
+	
+inputLine:
+	LD C, $04				;OS-specific "input line" function
+	RST $30
+	RET
+	
+outputLine:		
+	LD C, $06				;OS-specific "output line" function
+	RST $30
+	RET
+
+getGuess:
+    LD DE, messageGuess
+	CALL outputLine		    ;Show "Try to guess my number"
+
+    LD DE, rawInput
+    LD A, $2                ;1 byte + 1 terminator char
+    CALL inputLine
+    
+    ;try convert to int
+    LD A, (rawInput)
+    SUB $30                 ;Subtract 48 from ascii inputchar
+    JP M, notADigit         ;S flag negative indicator => not a digit
+    CP $0A                  ;compare to 10
+    JP NC, notADigit        ;gte 10 => not a digit
+    
+    LD (intInput), A
+    RET
+
+notADigit:
+    LD DE, messageNotADigit
+    CALL outputLine
+    JP getGuess
+
+
+messageStart:
+	.DB "I'm thinking of a number between 0 and 9.",5,0
+	
+messageGuess:	
+	.DB "Try to guess my number.",5,0
+
+messageLoss:
+	.DB "No more guesses!",5,0
+
+messageWin:
+	.DB "You're a great guesser!",5,0
+	
+messageHigher:
+	.DB "My number is higher.",5,0
+	
+messageLower:
+	.DB "My number is lower.",5,0
+	
+messageNotADigit:
+    .DB "You must enter a digit 0 to 9.",5,0
