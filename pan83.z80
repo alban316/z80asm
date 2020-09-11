@@ -13,7 +13,7 @@ theNumber EQU appBackupScreen + 200
 rawInput EQU appBackupScreen + 210
 numTries EQU appBackupScreen + 220
 intInput EQU appBackupScreen + 221
-gameOver EQU appBackupScreen + 222
+playing EQU appBackupScreen + 222
 
 
 .ORG ProgStart - 2
@@ -21,11 +21,13 @@ gameOver EQU appBackupScreen + 222
 .db t2ByteTok, tAsmCmp
 
 	LD A, $05
-	LD (theNumber), A						;theNumber is hard-coded as 5 for prototype
-	LD B, $05								;numTries will be 5
+	LD (numTries), A						;numTries will be 5
 
-	LD A, $00
-	LD (gameOver), A						;rewrite may not need this flag
+	LD A, $01
+	LD (playing), A							;set to Zero after correct guess
+
+	CALL rand
+	LD (theNumber), A						;theNumber is psuedo-random
 
 	B_CALL(_ClrLCDFull)						;clear screen
 	LD HL, 0
@@ -34,15 +36,19 @@ gameOver EQU appBackupScreen + 222
 	CALL outputLine
 
 mainLoop:
+	LD A, (numTries)
+	DEC A
+	LD (numTries), A
+	JP Z, noMoreGuesses
+
 	CALL getGuess
 	CALL evalGuess
 
 	;Check for gameover coming out of eval
-	LD A, (gameOver)
-	CP $01
+	LD A, (playing)
+	CP $0
 	RET Z									;Return to OS
-
-	DJNZ mainLoop							;Decrement B and Repeat
+	JP mainLoop								;Can't use DZNJ cuz _NewLine destroys B
 
 noMoreGuesses:
 	LD HL, messageLoss
@@ -55,14 +61,14 @@ evalGuess:
 	LD A, (theNumber)
 	CP C									;status (A-C)
 	JP Z, correctGuess						;A - C = 0
-	JP NC, highGuess						;A - C = negative
-	JP C, lowGuess							;A - C = positive
+	JP P, highGuess						;A - C = negative
+	JP M, lowGuess							;A - C = positive
 
 correctGuess:
 	LD HL, messageWin
 	CALL outputLine
-	LD A, $01
-	LD (gameOver), A
+	LD A, $0
+	LD (playing), A
 	RET										;return to mainLoop
 
 highGuess:
@@ -105,6 +111,30 @@ inputLine:
 	B_CALL(_GetKey)							;OS-specific "input line" function
 	LD (rawInput), A
 	RET
+
+rand:
+	ld a, r									;psuedo-random number from R
+	ld d, a
+	ld e, $0A								;divide by "10"
+
+;division routine from wikiti.brandonw.net
+;divide d by e, quotient result in d, remainder in a
+
+div_d_e:
+	xor a
+	ld b, 8
+
+_loop:
+	sla d
+	rla
+	cp e
+	jr c, $+4
+	sub e
+	inc d
+
+	djnz _loop
+
+	ret
 
 messageStart:
 .DB "I'm thinking of a number between 0 and 9.",0
