@@ -1,0 +1,27 @@
+;Pick-a-Number
+;Revision of my 3rd Assembly program ever.
+;Revision of my first original assembly program ever.
+;Revised for TI-83 Plus
+
+.nolist
+#include "ti83plus.inc"
+#define ProgStart $9D95
+.list
+
+.ORG ProgStart - 2
+
+.db t2ByteTok, tAsmCmp
+
+	b_call(_ClrLCDFull)
+	ld HL, 0
+	ld (PenCol), HL
+	ld HL, messageStart
+	b_call(_PutS)
+	b_call(_NewLine)
+	ret
+
+messageStart:
+.db "hello pepsi",0
+
+.END
+.END
