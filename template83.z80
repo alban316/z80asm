@@ -1,0 +1,28 @@
+;Template
+
+.nolist
+#include "ti83plus.inc"
+#define ProgStart $9D95
+.list
+
+
+someVar EQU appBackupScreen
+someVar2 EQU appBackupScreen + 1
+
+
+.ORG ProgStart - 2
+
+.db t2ByteTok, tAsmCmp
+
+	B_CALL(_ClrLCDFull)						;clear screen
+	LD HL, 0
+	LD (PenCol), HL							;init cursor column position
+	LD HL, message
+	B_CALL(_PutS)							;OS-specific "output line" function
+	B_CALL(_NewLine)
+	RET
+
+anotherVar:
+.DB "Z80 ASM is fun!",0
+
+.END

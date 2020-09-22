@@ -1,0 +1,113 @@
+;Attempt at graphics on TI-83
+
+.nolist
+#include "ti83plus.inc"
+#define ProgStart $9D95
+.list
+
+screenSize EQU 768
+
+
+picData EQU appBackupScreen
+rawInput EQU appBackupScreen + screenSize
+x1 EQU rawInput + 1
+y1 EQU rawInput + 2
+ltpart EQU rawInput + 3
+rtpart EQU rawInput + 4
+offset EQU rawInput + 5
+
+.ORG ProgStart - 2
+
+.db t2ByteTok, tAsmCmp
+
+clearGrBuffer:
+	LD HL, PlotSScreen
+	LD DE, PlotSScreen + 1
+	LD BC, screenSize - 1
+	LD (HL), 0
+	LDIR
+	
+	;don't display blank screen yet, otherwise...B_CALL(_GrBufCpy)
+
+main:
+	;given a screen 96 px wide x 64 px tall
+	;draw a 1-byte horizontal line e.g. 1 of 8 lines for a sprite
+	;sprite location is 2,0 (col,row)
+	;so we are in byte column 0 (quotient), and we must shift bits right by 2 (remainder)
+	;
+	;for now here's a quick sample of display F at column 5
+	;Address should be 12 * row + col
+	
+	LD A, 1								;row 1
+	LD DE, $0C							;12d
+	CALL de_times_a						;result is in HL
+	PUSH HL								;save this result
+	LD HL, PlotSScreen					;point to screen buffer
+	POP BC								;retrieve result
+	ADD HL, BC							;add result (row offset)
+	LD BC, 5							;col 5
+	ADD HL, BC							;add col offset
+	LD (HL), $FF						;set byte value
+	B_CALL(_GrBufCpy)					;display the screen
+	
+	
+	RET
+
+
+pressAKeyToQuit:
+	B_CALL(_GetKey)						;OS-specific "input line" function
+	LD (rawInput), A
+	RET
+
+
+;fast multiplication route from http://tutorials.eeems.ca/ASMin28Days/lesson/day15.html
+;HL = DE * A
+
+de_times_a:
+	LD HL, 0							;HL to store the product
+	LD B, 8								;8-bits to check
+
+_loop0:
+	RRCA								;check LSB of A
+	JR NC, _skip						;if zero, skip addition
+	ADD HL, DE
+
+_skip:
+	SLA E								;shift DE one bit left
+	RL D
+	DJNZ _loop0
+	RET
+
+;division routine from wikiti.brandonw.net
+;divide d by e, quotient result in d, remainder in a
+
+div_d_e:
+	XOR A
+	LD B, 8
+
+_loop1:
+	SLA D
+	RLA
+	CP E
+	JR C, $+4
+	SUB E
+	INC D
+
+	DJNZ _loop1
+
+	RET
+
+mySprite:
+.DB %00111100
+.DB %01000010
+.DB %10100101
+.DB %10000001
+.DB %10100101
+.DB %10011001
+.DB %01000010
+.DB %00111100
+
+myMask:
+.DB 0, $80, $C0, $E0, $10, $F8, $FC, $FE, $FF
+
+.END

@@ -1,0 +1,38 @@
+;Template
+
+.nolist
+#include "ti83plus.inc"
+#define ProgStart $9D95
+.list
+
+
+;bigvar1 EQU appBackupScreen + 200
+;bigvar2 EQU appBackupScreen + 210
+;x EQU appBackupScreen + 220
+;y EQU appBackupScreen + 221
+;enemy EQU appBackupScreen + 222
+
+
+TextScreenSize EQU 128
+
+sc0 EQU appBackupScreen
+
+
+
+.ORG ProgStart - 2
+
+.db t2ByteTok, tAsmCmp
+
+;init sc0
+	B_CALL(_ClrLCDFull)
+	
+	LD HL, 8 * 256 + 4
+	LD (curRow), HL
+
+	LD A, $41
+	B_CALL(_PutMap)
+	
+	RET
+
+
+.END

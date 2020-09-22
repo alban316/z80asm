@@ -1,0 +1,76 @@
+;Template
+
+.nolist
+#include "ti83plus.inc"
+#define ProgStart $9D95
+.list
+
+
+TextScreenSize EQU 128
+
+;128 bytes reserved
+sc0 EQU appBackupScreen
+
+;1 byte each
+myCol EQU sc0 + 128
+
+
+.ORG ProgStart - 2
+
+.db t2ByteTok, tAsmCmp
+
+;init sc0
+	B_CALL(_ClrLCDFull)
+
+	LD HL, sc0
+	LD DE, sc0 + 1
+	LD BC, TextScreenSize - 1
+	LD (HL), 'X'
+	LDIR
+
+	;this ought to fill sc0 with X's
+	;which I can subsqeuently dump to the TI display using PutMap
+	;this all works except for the following anomalous behavior:
+	;1-when I init A with 16 to fill the last column, it goes haywire at runtime
+	;2-
+
+
+drawScr:
+	LD A, 15
+	LD (myCol), A							;init mycol at 16, will use increments of -1
+	LD HL, sc0								;start at sc0 buffer
+	LD IX, 0								;init IX at 0 zero, will use increments of 256d
+	PUSH IX
+
+_forEachCol:
+	LD B, 7									;init B with a countdown of 7 rows
+	CALL _forEachRow
+
+	;increment TI text screen by 256 bytes
+	POP IX
+	LD DE, $100								;byte count 256d 
+	ADD IX, DE								;increment by 256d (which is 1 column)
+	PUSH IX
+
+	;decrement column count & check for exit
+	LD A, (myCol)
+	DEC A
+	LD (myCol), A
+	RET Z									;return to OS if this was last column
+
+	JP _forEachCol
+
+_forEachRow:
+	LD A, (HL)								;init A with whatever is at sc0
+	;ADD A, $41			;turns our "B" into a character so we can hopefully see a pattern
+	LD (curRow), IX
+	B_CALL(_PutMap)
+	INC HL									;advance to next byte of sc0
+	INC IX									;increment by 1 row
+	DJNZ _forEachRow
+	RET
+
+	;above implies that I had better store columns of rows instead of rows of columns
+	;above should print a column of A's down the left
+
+.END

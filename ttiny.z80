@@ -1,0 +1,30 @@
+;Template
+
+.nolist
+#include "ti83plus.inc"
+#define ProgStart $9D95
+.list
+
+TextScreenSize EQU 128
+
+sc0 EQU appBackupScreen
+
+
+
+.ORG ProgStart - 2
+
+.db t2ByteTok, tAsmCmp
+
+;init sc0
+	B_CALL(_ClrLCDFull)
+	
+	LD HL, 15 * 256 + 7
+	LD (curRow), HL
+
+	LD A, 'X'
+	B_CALL(_PutMap)
+	B_CALL(_NewLine)
+	RET
+
+
+.END
