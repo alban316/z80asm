@@ -30,7 +30,7 @@ currow EQU rawInput + 6
 
 	;given a screen 96 px wide x 64 px tall
 	;with 8px per byte, a row (horizontal line) is 12 bytes
-	;valid range for sprite upper left (col, row) is (0,0) to (88,57) or ($58, $38)
+	;valid range for sprite upper left (col, row) is (0,0) to (88 px,57 px) or ($58, $38)
 
 	LD A, 0
 	LD (col), A
@@ -121,7 +121,7 @@ _rightByte:
 	POP HL								;retrieve byte location
 	INC HL								;move one byte ahead for right byte
 	LD A, (rtpart)
-	LD (HL), A							;set byte value; e.g. rtpart
+	LD (HL), A							;set byte value; i.e. rtpart
 	DEC HL								;drop back to original SScreen location 
 	
 _leftByte:
