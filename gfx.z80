@@ -28,18 +28,28 @@ currow EQU rawInput + 6
 
 .db t2ByteTok, tAsmCmp
 
-
-main:
 	;given a screen 96 px wide x 64 px tall
 	;with 8px per byte, a row (horizontal line) is 12 bytes
+	;valid range for sprite upper left (col, row) is (0,0) to (88,57) or ($58, $38)
 
-
-	LD A, 3
+	LD A, 0
 	LD (col), A
-	LD A, 1
+	LD A, 0
 	LD (row), A
-	CALL clearGrBuffer
-	
+
+do:
+	CALL clearGrBuffer					;can we afford to erase entire buffer every time??
+	CALL putSprite
+	LD A, (row)
+	INC A
+	CP $39
+	RET Z								;quit if we've reached row 58d (which is out of bounds)
+	LD (row), A
+	LD A, (col)
+	INC A								;otherwise inc col, too!
+	LD (col), A
+	JR do
+
 putSprite:
 	;draws an 8x8 sprite
 	;Registers destroyed: A, HL, DE, BC, IX
@@ -134,8 +144,11 @@ _leftByte:
 	
 	;display sprite
 	B_CALL(_GrBufCpy)					;display the screen (don't do this until all bytes are set)
+	RET
 
 pressAKeyToQuit:
+	;this is not currently being called 
+	;and doesn't seem to be needed! Cuz screen is not automatically exiting like it did before
 	B_CALL(_GetKey)						;OS-specific "input line" function
 	LD (rawInput), A
 	RET
