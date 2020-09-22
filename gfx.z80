@@ -10,46 +10,44 @@ screenSize EQU 768
 
 picData EQU appBackupScreen
 rawInput EQU appBackupScreen + screenSize
-x1 EQU rawInput + 1
-y1 EQU rawInput + 2
+
+;1-byte vars
+col EQU rawInput + 1
+row EQU rawInput + 2
 ltpart EQU rawInput + 3
 rtpart EQU rawInput + 4
-offset EQU rawInput + 5
+spriteShift EQU rawInput + 5
+currow EQU rawInput + 6
+
+;2-byte vars
+;var2bytestart EQU rawInput + 10
+;p_spriteRow EQU var2bytestart
+;p_screenByte EQU var2bytestart + 2
 
 .ORG ProgStart - 2
 
 .db t2ByteTok, tAsmCmp
 
-clearGrBuffer:
-	LD HL, PlotSScreen
-	LD DE, PlotSScreen + 1
-	LD BC, screenSize - 1
-	LD (HL), 0
-	LDIR
-	
-	;don't display blank screen yet, otherwise...B_CALL(_GrBufCpy)
 
 main:
 	;given a screen 96 px wide x 64 px tall
 	;with 8px per byte, a row (horizontal line) is 12 bytes
-	;draw a 1-byte horizontal line e.g. 1 of 8 lines for a sprite
-	;Registers destroyed: A, HL, DE, BC
+
+
+	LD A, 3
+	LD (col), A
+	LD A, 1
+	LD (row), A
+	CALL clearGrBuffer
 	
-	;TO DO:
-	;starting at y, loop 8 times incrementing pointer for y
-	;also increment pointer for mysprite
-	
-	
-	;first load the spriterow into memory
-	;loop this for each sprite row
-	LD A, (mySprite)
-	LD (ltpart), A						;store a copy of sprite in leftpart
-	LD (rtpart), A						;store a copy of sprite in rightpart
-	
-	;next let's find the byte row!
+putSprite:
+	;draws an 8x8 sprite
+	;Registers destroyed: A, HL, DE, BC, IX
+
+	;first let's find the byte row!
 	;Address should be 12 * row + col
-	;only need to do this once for first row
-	LD A, 1								;row 1 (y)
+	;only need to do this once for 1st row (we'll just increment thereafter)
+	LD A, (row)							;row in px
 	LD DE, $0C							;12d
 	CALL de_times_a						;result is in HL
 	PUSH HL								;save this result
@@ -57,22 +55,35 @@ main:
 	POP BC								;retrieve result
 	ADD HL, BC							;add result (row offset) to HL
 	
-	;now find byte column & bitshift (if any)
+	;next find byte column & bitshift (if any)
 	;Byte offset should be col / 8
-	;only need to do this once for first row
-	LD A, 3								;col 3 (x)
+	;only need to do this once for 1st row (we'll just increment thereafter)
+	LD A, (col)							;col in px
 	LD D, A								;dividend A
 	LD E, 8								;divisor 8
 	CALL div_d_e						;quotient (column) to D, remainder (bitshift) to A
+	LD (spriteShift), A					;save bitshift to RAM
 	LD B, 0								;Zero-out the left half of BC
 	LD C, D								;load quotient (column) to C of BC
 	ADD HL, BC							;add (column) offset to HL
+	
+	;init sprite currow at zero
+	LD A, 0
+	LD (currow), A
+	LD IX, mySprite
+
+_spriteRow:
+	;draw a 1-byte horizontal row of a sprite
+	;first load the spriterow into memory
+	LD A, (IX)							;load sprite from IX to A
+	LD (ltpart), A						;store a copy of sprite in leftpart
+	LD (rtpart), A						;store a copy of sprite in rightpart
+	LD A, (spriteShift)					;recall spriteshift
 	CP 0								;compare A to zero
 	JP Z, _leftByte						;if A is zero JP to leftByte, don't do any bit shifting
 
 	;handle situation where x spans 2 bytes
-	;A contains the offset
-	;loop this for each sprite row
+	;A contains the shift offset from above
 	LD B, A								;prepare to loop B times per offset bits
 	LD C, A								;will use offset for masking momentarily
 	PUSH HL								;preserve byte location
@@ -101,18 +112,41 @@ _rightByte:
 	INC HL								;move one byte ahead for right byte
 	LD A, (rtpart)
 	LD (HL), A							;set byte value; e.g. rtpart
-	DEC HL
+	DEC HL								;drop back to original SScreen location 
 	
 _leftByte:
+	;for no bitshift, HL already contains correct SScreen loc, no need to pop
 	LD A, (ltpart)
 	LD (HL), A							;set byte value, e.g. ltpart
-	B_CALL(_GrBufCpy)					;display the screen
+	LD B, 0								;B of BC to 0
+	LD C, $0C							;C of BC to 12d
+	ADD HL, BC							;increment HL by 12 for next row
+	INC IX								;increment ptr to spriteRow
+	
+	;increment sprite row counter
+	LD A, (currow)
+	INC A
+	LD (currow), A
+	
+	;stop after 8 iterations
+	CP 8
+	JP NZ, _spriteRow
+	
+	;display sprite
+	B_CALL(_GrBufCpy)					;display the screen (don't do this until all bytes are set)
 
 pressAKeyToQuit:
 	B_CALL(_GetKey)						;OS-specific "input line" function
 	LD (rawInput), A
 	RET
 
+clearGrBuffer:
+	LD HL, PlotSScreen
+	LD DE, PlotSScreen + 1
+	LD BC, screenSize - 1
+	LD (HL), 0
+	LDIR
+	RET
 
 ;fast multiplication route from http://tutorials.eeems.ca/ASMin28Days/lesson/day15.html
 ;HL = DE * A
