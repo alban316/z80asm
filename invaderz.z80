@@ -22,6 +22,8 @@ framect EQU rawInput + 7
 loopct EQU rawInput + 8
 curcol EQU rawInput + 9
 curline EQU rawInput + 10
+vcol EQU rawInput + 11
+vrow EQU rawInput + 12
 
 
 
@@ -35,68 +37,66 @@ curline EQU rawInput + 10
 
 	CALL clearGrBuffer
 
-	;init row, col, single sprite
-	;(col,row) reflects the upper left (x,y) of invader block
+	;(vcol,vrow) reflects the upper left (x,y) of invader block
+	LD A, 3
+	LD (vcol), A
 	LD A, 0
-	LD (col), A
-	LD A, 0
+	LD (vrow), A
 	LD (row), A
-	LD A, 0
+	LD A, 4								;HARD CODED NUM OF LINES = 4
 	LD (curline), A
-	LD A, 0
-	LD (curcol), A
 	LD HL, invaders
-	CALL invaderLine
+	CALL invaderLines
 	RET
 	
-	
 invaderLines:
-	;(row),(col) must be initialized
+	;(row),(vcol) must be initialized
 	;(row) will be destroyed--so keep a copy of it
-	PUSH HL
-	LD A, 0
+	;(col) will be destroyed--so keep a copy of it
+	
+	;for 1st iteration HL = invaders
+	;subsequent iterations stepped through during invaderLine
+	LD A, $0B							;HARD CODED NUMBER OF COLS = 11d
 	LD (curcol), A
+	LD A, 0								;recall invader body vcol value (0 temporarily for testing)
+	LD (col), A							;init col at vcol value
+										;NOTE this is temporary. If e.g. col was 5 px at start we'd need to reset at 5 px not zero
 	CALL invaderLine
 	
 	;are we done yet?
-	LD A, (curline)
-	INC A
-	CP 1
-	RET Z
+	LD A, (curline)						;stage curline in A
+	DEC A								;decrement by 1
+	RET Z								;quit if done
 
-	;nope!
-	LD (curline), A
-	LD A, (row)
-	ADD A, 8
-	LD (row), A
-	POP HL
-	LD B, 0
-	LD C, $0B							;11d (HARD CODED)
-	ADD HL, BC
+	;not done, queue up the next row
+	LD (curline), A						;upd curline for next loop
+	LD A, (row)							;stage row in A
+	ADD A, 8							;increment by 8px
+	LD (row), A							;update row in memory
+	
 	JP invaderLines
-
 
 invaderLine:
 	;(row),(col) must be initialized
 	;HL must point to invaders array e.g. LD HL, invaders
 	;(col) will be destroyed--so keep a copy of it
 	
-	LD HL, invaders						;array of invaders for a row
-	LD B, 0								;upper part of BC init zero
-	LD A, (curcol)						;stage curcol (index) in A
-	LD C, A								;stage curcol in C via A
-	ADD HL, BC							;now, we are pointing at correct element
+	;HL is already pointing at correct element of invaders
+	LD B, 0								;init BC upper byte to 0
 	LD A, (HL)							;element value is spritesheet offset in bytes
-	LD C, A
+	LD C, A								;init BC lower byte to staged value
 
-	LD IX, sp_sheet						;get invaders array
+	LD IX, sp_sheet						;get spritesheet
 	ADD IX, BC							;value at index is sprite frame offset in bytes
+	PUSH HL								;save our place in invaders array
 	CALL putSprite
 
-	;check if we're done
+	;check if we're done with this line
+	;we need to POP & INC even if so, to be ready for next line
+	POP HL								;recall our place in invaders array
+	INC HL								;advance to next element
 	LD A, (curcol)						;stage curcol (index) in A
-	INC A								;increment by 1
-	CP $0B								;compare to 11d (HARD CODED)
+	DEC A								;decrement by 1
 	RET Z								;quit if we're done
 
 	;not done
@@ -106,7 +106,6 @@ invaderLine:
 	LD (col), A							;update col
 
 	JP invaderLine
-
 
 ;anim:
 	;(framect) must be initialized
@@ -157,7 +156,6 @@ putSprite:
 	;expect IX to contain ptr to sprite
 	LD A, 0
 	LD (currow), A
-										;LD IX, mySprite
 
 _spriteRow:
 	;draw a 1-byte horizontal row of a sprite
@@ -315,11 +313,12 @@ sp_sheet:
 
 invaders:
 ;offset by index = 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0 
-.DB 0, $10, 0, $10, 0, $10, 0, $10, 0, $10, 0, $10
-.DB $10, 0, $10, 0, $10, 0, $10, 0, $10, 0, $10, 0
-.DB 0, $10, 0, $10, 0, $10, 0, $10, 0, $10, 0, $10
-.DB $10, 0, $10, 0, $10, 0, $10, 0, $10, 0, $10, 0
-.DB 0, $10, 0, $10, 0, $10, 0, $10, 0, $10, 0, $10
+;.DB 0, $10, 0, $10, 0, $10, 0, $10, 0, $10, 0
+;.DB $10, 0, $10, 0, $10, 0, $10, 0, $10, 0, $10
+.DB 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+.DB $10, $10, $10, $10, $10, $10, $10, $10, $10, $10, $10
+.DB 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+.DB $10, $10, $10, $10, $10, $10, $10, $10, $10, $10, $10
 
 myMask:
 .DB 0, $80, $C0, $E0, $10, $F8, $FC, $FE, $FF
