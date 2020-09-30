@@ -1,4 +1,22 @@
-;Attempt at graphics on TI-83
+;Space Invaders clone for TI-83
+;Backlog:
+; BUG: When col (px) spans bytes, sprite is being cutoff
+; 2DO: Accept input, adjust pcol left or right
+; 2DO: Accept input, spawn missile
+; 2DO: Move entire fleet of invaders by adjusting vcol (on a timer)
+; 2DO: Add animation of sprites, e.g. eyes legs
+; 2DO: Allow missile animation incl adjust mrow (on a timer)
+; 2DO: Allow drop bomb incl adjust brow (on a timer)
+; 2DO: Sprite collision (missile vs invader, player vs invader, player vs bomb)
+; 2DO: Count lives lost
+; 2DO: Count invaders killed
+; 2DO: Blank the invaders element where enemy was killed so nothing renders in that place (or add code to skip putSprite in such cases)
+; 2DO: Have a 2nd copy of "invaders" array that points to left-facing sprites
+; 2DO: In case of blanking an element, be sure to blank both left & right versions!
+
+;Finished:
+; 2DO: Display player sprite
+
 
 .nolist
 #include "ti83plus.inc"
@@ -24,6 +42,8 @@ curcol EQU rawInput + 9
 curline EQU rawInput + 10
 vcol EQU rawInput + 11
 vrow EQU rawInput + 12
+pcol EQU rawInput + 13
+prow EQU rawInput + 14
 
 
 
@@ -32,24 +52,49 @@ vrow EQU rawInput + 12
 .db t2ByteTok, tAsmCmp
 
 	;given a screen 96 px wide x 64 px tall
+	;(in 8x8 terms this is 12 x 8)
 	;with 8px per byte, a row (horizontal line) is 12 bytes
 	;valid range for sprite upper left (col, row) is (0,0) to (88 px,57 px) or ($58, $38)
 
 	CALL clearGrBuffer
+	
+	;init player row, col
+	LD A, $38
+	LD (prow), A
+	
+	LD A, $2C
+	LD (pcol), A
 
-	;(vcol,vrow) reflects the upper left (x,y) of invader block
+	;init invader (fleet) left column
 	LD A, 3
 	LD (vcol), A
+	
+	;init invader (fleet) top row
 	LD A, 0
 	LD (vrow), A
-	LD (row), A
-	LD A, 4								;HARD CODED NUM OF LINES = 4
+	
+	LD A, 4								;HARD CODED FLEET LINES = 4
 	LD (curline), A
 	LD HL, invaders
-	CALL invaderLines
-	RET
+	LD A, (vrow)
+	LD (row), A
+	CALL putInvaders
 	
-invaderLines:
+	CALL putPlayer
+	
+	B_CALL(_GrBufCpy)					;finally display the screen buffer!
+	RET
+
+putPlayer:
+	LD IX, player						;loads right-facing version
+	LD A, (prow)
+	LD (row), A
+	LD A, (pcol)
+	LD (col), A
+	CALL putSprite
+	RET
+
+putInvaders:
 	;(row),(vcol) must be initialized
 	;(row) will be destroyed--so keep a copy of it
 	;(col) will be destroyed--so keep a copy of it
@@ -58,9 +103,9 @@ invaderLines:
 	;subsequent iterations stepped through during invaderLine
 	LD A, $0B							;HARD CODED NUMBER OF COLS = 11d
 	LD (curcol), A
-	LD A, 0								;recall invader body vcol value (0 temporarily for testing)
+	LD A, (vcol)						;recall invader fleet vcol value
 	LD (col), A							;init col at vcol value
-										;NOTE this is temporary. If e.g. col was 5 px at start we'd need to reset at 5 px not zero
+
 	CALL invaderLine
 	
 	;are we done yet?
@@ -74,7 +119,7 @@ invaderLines:
 	ADD A, 8							;increment by 8px
 	LD (row), A							;update row in memory
 	
-	JP invaderLines
+	JP putInvaders
 
 invaderLine:
 	;(row),(col) must be initialized
@@ -92,7 +137,7 @@ invaderLine:
 	CALL putSprite
 
 	;check if we're done with this line
-	;we need to POP & INC even if so, to be ready for next line
+	;either way, we still need to POP & INC to be ready for next col or next line
 	POP HL								;recall our place in invaders array
 	INC HL								;advance to next element
 	LD A, (curcol)						;stage curcol (index) in A
@@ -195,13 +240,15 @@ _shiftLoop:
 _rightByte:
 	POP HL								;retrieve byte location
 	INC HL								;move one byte ahead for right byte
-	LD A, (rtpart)
-	LD (HL), A							;set byte value; i.e. rtpart
+	LD A, (rtpart)						;Stage A with right half of sprite bits
+	OR (HL)								;OR with whatever's already there
+	LD (HL), A							;set byte value; i.e. rtpart 
 	DEC HL								;drop back to original SScreen location 
 	
 _leftByte:
 	;for no bitshift, HL already contains correct SScreen loc, no need to pop
-	LD A, (ltpart)
+	LD A, (ltpart)						;Stage A with left half of sprite bits
+	OR (HL)								;OR with whatever's already there
 	LD (HL), A							;set byte value, e.g. ltpart
 	LD B, 0								;B of BC to 0
 	LD C, $0C							;C of BC to 12d
@@ -214,8 +261,9 @@ _leftByte:
 	CP 8								;stop after 8 iterations
 	JP NZ, _spriteRow
 	
-	;display sprite
-	B_CALL(_GrBufCpy)					;display the screen (don't do this until all bytes are set)
+	;used to display sprite here
+	;now moved to outermost loop after all sprites buffered
+
 	RET
 
 pressAKeyToQuit:
@@ -320,7 +368,28 @@ invaders:
 .DB 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 .DB $10, $10, $10, $10, $10, $10, $10, $10, $10, $10, $10
 
+player:
+;right facing
+.DB %00000000
+.DB %00000000
+.DB %00000000
+.DB %00010100
+.DB %00011100
+.DB %00111110
+.DB %01111111
+.DB %01111111
+
+;left facing
+.DB %00000000
+.DB %00101000
+.DB %00111000
+.DB %01111100
+.DB %11111110
+.DB %11111110
+.DB %11111110
+.DB %11111110
+
 myMask:
-.DB 0, $80, $C0, $E0, $10, $F8, $FC, $FE, $FF
+.DB 0, $80, $C0, $E0, $F0, $F8, $FC, $FE, $FF
 
 .END

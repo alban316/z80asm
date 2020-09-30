@@ -1,0 +1,243 @@
+;Attempt at graphics on TI-83
+
+.nolist
+#include "ti83plus.inc"
+#define ProgStart $9D95
+.list
+
+screenSize EQU 768
+
+
+picData EQU appBackupScreen
+rawInput EQU appBackupScreen + screenSize
+
+;1-byte vars
+col EQU rawInput + 1
+row EQU rawInput + 2
+ltpart EQU rawInput + 3
+rtpart EQU rawInput + 4
+spriteShift EQU rawInput + 5
+currow EQU rawInput + 6
+acol EQU rawInput + 7
+bcol EQU rawInput + 8
+
+
+
+.ORG ProgStart - 2
+
+.db t2ByteTok, tAsmCmp
+
+	;given a screen 96 px wide x 64 px tall
+	;with 8px per byte, a row (horizontal line) is 12 bytes
+	;valid range for sprite upper left (col, row) is (0,0) to (88 px,57 px) or ($58, $38)
+
+	LD A, 0
+	LD (acol), A
+	LD A, $58
+	LD (bcol), A
+	LD A, 0
+	LD (row), A
+
+do:
+	CALL clearGrBuffer					;can we afford to erase entire buffer every time??
+	
+	;process first sprite
+	LD A, (acol)
+	LD (col), A
+	CALL putSprite
+	
+	;process second sprite
+	LD A, (bcol)
+	LD (col), A
+	CALL putSprite
+	
+	;display the buffer
+	B_CALL(_GrBufCpy) 
+	
+	LD A, (row)
+	INC A
+	CP $39
+	RET Z								;quit if we've reached row 58d (which is out of bounds)
+	LD (row), A							;update row in RAM
+	
+	LD A, (acol)						;stage acol in A
+	INC A								;increment by 1
+	LD (acol), A						;update acol in RAM
+	
+	LD A, (bcol)						;stage bcol in A
+	DEC A								;decrement by 1
+	LD (bcol), A						;update bcol in RAM
+	
+	JR do
+
+putSprite:
+	;draws an 8x8 sprite
+	;Registers destroyed: A, HL, DE, BC, IX
+
+	;first let's find the byte row!
+	;Address should be 12 * row + col
+	;only need to do this once for 1st row (we'll just increment thereafter)
+	LD A, (row)							;row in px
+	LD DE, $0C							;12d
+	CALL de_times_a						;result is in HL
+	PUSH HL								;save this result
+	LD HL, PlotSScreen					;point to screen buffer
+	POP BC								;retrieve result
+	ADD HL, BC							;add result (row offset) to HL
+	
+	;next find byte column & bitshift (if any)
+	;Byte offset should be col / 8
+	;only need to do this once for 1st row (we'll just increment thereafter)
+	LD A, (col)							;col in px
+	LD D, A								;dividend A
+	LD E, 8								;divisor 8
+	CALL div_d_e						;quotient (column) to D, remainder (bitshift) to A
+	LD (spriteShift), A					;save bitshift to RAM
+	LD B, 0								;Zero-out the left half of BC
+	LD C, D								;load quotient (column) to C of BC
+	ADD HL, BC							;add (column) offset to HL
+	
+	;init sprite currow at zero
+	LD A, 0
+	LD (currow), A
+	LD IX, mySprite
+
+_spriteRow:
+	;draw a 1-byte horizontal row of a sprite
+	;first load the spriterow into memory
+	LD A, (IX)							;load sprite from IX to A
+	LD (ltpart), A						;store a copy of sprite in leftpart
+	LD (rtpart), A						;store a copy of sprite in rightpart
+	LD A, (spriteShift)					;recall spriteshift
+	CP 0								;compare A to zero
+	JP Z, _leftByte						;if A is zero JP to leftByte, don't do any bit shifting
+
+	;handle situation where x spans 2 bytes
+	;A contains the shift offset from above
+	LD B, A								;prepare to loop B times per offset bits
+	LD C, A								;will use offset for masking momentarily
+	PUSH HL								;preserve byte location
+	CALL _shiftLoop						;loop will run B times to shift bits
+	PUSH HL								;preserve rtpart
+	LD HL, myMask						;NOTE: B is zero coming out of loop; C holds offset, so...
+	ADD HL, BC							;...HL now points to correct mask for this offset
+	LD A, (HL)							;stage the mask value in A
+	LD B, A								;Load B with mask value
+	POP HL								;retrieve rtpart loc
+	LD A, (HL)							;Load A with rtpart value
+	AND B								;apply mask
+	LD (rtpart), A						;rtpart is now masked
+	JP _rightByte
+	
+_shiftLoop:
+	LD HL, ltpart
+	SRL (HL)							;shift right
+	LD HL, rtpart
+	RR (HL)								;rotate right
+	DJNZ _shiftLoop
+	RET
+	
+_rightByte:
+	POP HL								;retrieve byte location
+	INC HL								;move one byte ahead for right byte
+	LD A, (rtpart)
+	LD (HL), A							;set byte value; i.e. rtpart
+	DEC HL								;drop back to original SScreen location 
+	
+_leftByte:
+	;for no bitshift, HL already contains correct SScreen loc, no need to pop
+	LD A, (ltpart)
+	LD (HL), A							;set byte value, e.g. ltpart
+	LD B, 0								;B of BC to 0
+	LD C, $0C							;C of BC to 12d
+	ADD HL, BC							;increment HL by 12 for next row
+	INC IX								;increment ptr to spriteRow
+	
+	;increment sprite row counter
+	LD A, (currow)
+	INC A
+	LD (currow), A
+	
+	;stop after 8 iterations
+	CP 8
+	JP NZ, _spriteRow
+	
+	;display sprite
+	;B_CALL(_GrBufCpy)					;display the screen (don't do this until all bytes are set)
+	RET
+
+pressAKeyToQuit:
+	;this is not currently being called 
+	;and doesn't seem to be needed! Cuz screen is not automatically exiting like it did before
+	B_CALL(_GetKey)						;OS-specific "input line" function
+	LD (rawInput), A
+	RET
+
+clearGrBuffer:
+	LD HL, PlotSScreen
+	LD DE, PlotSScreen + 1
+	LD BC, screenSize - 1
+	LD (HL), 0
+	LDIR
+	RET
+
+;fast multiplication route from http://tutorials.eeems.ca/ASMin28Days/lesson/day15.html
+;HL = DE * A
+
+de_times_a:
+	LD HL, 0							;HL to store the product
+	LD B, 8								;8-bits to check
+
+_loop0:
+	RRCA								;check LSB of A
+	JR NC, _skip						;if zero, skip addition
+	ADD HL, DE
+
+_skip:
+	SLA E								;shift DE one bit left
+	RL D
+	DJNZ _loop0
+	RET
+
+;division routine from wikiti.brandonw.net
+;divide d by e, quotient result in d, remainder in a
+
+div_d_e:
+	XOR A
+	LD B, 8
+
+_loop1:
+	SLA D
+	RLA
+	CP E
+	JR C, $+4
+	SUB E
+	INC D
+
+	DJNZ _loop1
+
+	RET
+
+mySprite:
+.DB %00111100
+.DB %01000010
+.DB %10100101
+.DB %10000001
+.DB %10100101
+.DB %10011001
+.DB %01000010
+.DB %00111100
+;extra frame not needed
+.DB %00111100
+.DB %01000010
+.DB %10100101
+.DB %10000001
+.DB %10100101
+.DB %10011001
+.DB %01000010
+.DB %00111100
+
+myMask:
+.DB 0, $80, $C0, $E0, $10, $F8, $FC, $FE, $FF
+
+.END
