@@ -188,11 +188,9 @@ putInvaders:
 	
 	;for 1st iteration HL = invaders
 	;subsequent iterations stepped through during invaderLine
-	LD A, $0B							;HARD CODED NUMBER OF COLS = 11d
-	LD (curcol), A
 	LD A, (vcol)						;recall invader fleet vcol value
 	LD (col), A							;init col at vcol value
-
+	LD B, $0B							;Iterate invaderLine 11d times
 	CALL invaderLine
 	
 	;are we done yet?
@@ -208,11 +206,13 @@ putInvaders:
 	
 	JP putInvaders
 
-;consider DJNZ instead of curcol <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK!
+
 invaderLine:
 	;(row),(col) must be initialized
 	;HL must point to invaders array e.g. LD HL, invaders
 	;(col) will be destroyed--so keep a copy of it
+	
+	PUSH BC								;save our B counter for DJNZ
 	
 	;HL is already pointing at correct element of invaders
 	LD B, 0								;init BC upper byte to 0
@@ -228,17 +228,12 @@ invaderLine:
 	;either way, we still need to POP & INC to be ready for next col or next line
 	POP HL								;recall our place in invaders array
 	INC HL								;advance to next element
-	LD A, (curcol)						;stage curcol (index) in A
-	DEC A								;decrement by 1
-	RET Z								;quit if we're done
-
-	;not done
-	LD (curcol), A						;update curcol for next loop
 	LD A, (col)							;recall col in px
 	ADD A, 8							;add 8px
 	LD (col), A							;update col
-
-	JP invaderLine
+	POP BC								;recall our B counter
+	DJNZ invaderLine
+	RET
 
 ;anim:
 	;(framect) must be initialized
