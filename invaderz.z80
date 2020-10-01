@@ -47,9 +47,6 @@ ltpart EQU rawInput + 3
 rtpart EQU rawInput + 4
 spriteShift EQU rawInput + 5
 framect EQU rawInput + 7
-loopct EQU rawInput + 8
-curcol EQU rawInput + 9
-curline EQU rawInput + 10
 vcol EQU rawInput + 11
 vrow EQU rawInput + 12
 pcol EQU rawInput + 13
@@ -153,18 +150,15 @@ _justUpdate:
 	LD A, (vcol)
 	ADD A, B
 	LD (vcol), A
-	CALL render
-	RET
 
 render:
 	CALL clearGrBuffer
 	CALL putPlayer
 
-	LD A, 4								;HARD CODED FLEET LINES = 4
-	LD (curline), A
-	LD HL, invaders
+	LD HL, invaders						;HL must point to invaders before "putInvaders"
 	LD A, (vrow)
-	LD (row), A
+	LD (row), A							;row must be init'd to vrow before "putInvaders"
+	LD B, 4								;putInvaders will loop x4 lines of enemies
 	CALL putInvaders
 
 	B_CALL(_GrBufCpy)					;finally display the screen buffer!
@@ -180,12 +174,13 @@ putPlayer:
 	CALL putSprite
 	RET
 
-;consider DJNZ instead of curline <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK!
 putInvaders:
 	;(row),(vcol) must be initialized
 	;(row) will be destroyed--so keep a copy of it
 	;(col) will be destroyed--so keep a copy of it
 	
+	PUSH BC								;save our B counter for DJNZ, below
+
 	;for 1st iteration HL = invaders
 	;subsequent iterations stepped through during invaderLine
 	LD A, (vcol)						;recall invader fleet vcol value
@@ -193,19 +188,12 @@ putInvaders:
 	LD B, $0B							;Iterate invaderLine 11d times
 	CALL invaderLine
 	
-	;are we done yet?
-	LD A, (curline)						;stage curline in A
-	DEC A								;decrement by 1
-	RET Z								;quit if done
-
-	;not done, queue up the next row
-	LD (curline), A						;upd curline for next loop
 	LD A, (row)							;stage row in A
 	ADD A, 8							;increment by 8px
 	LD (row), A							;update row in memory
-	
-	JP putInvaders
-
+	POP BC
+	DJNZ putInvaders
+	RET
 
 invaderLine:
 	;(row),(col) must be initialized
