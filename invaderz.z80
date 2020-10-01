@@ -1,5 +1,6 @@
 ;Space Invaders clone for TI-83
 ;Backlog:
+; BUG: For some reason Enter/Clear doesn't quit on RET Z appx line 110
 ; MAYB: Move player in 8px increments instead of smoothly? Enemy will always move smoothly tho!!
 ; 2DO: Accept input, spawn missile
 ; 2DO: Allow missile animation incl adjust mrow (on a timer)
@@ -12,10 +13,9 @@
 ; 2DO? Should they keep going back & forth only 8px even after half or more are eliminated? Or should remaining guys use full range?
 ;;;;;;I think whenever an enemy is killed, a check should be done for leftmost & rightmost enemy remaining
 ;;;;;;This will be used to determine left & right max--ugh, but then we won't be hard-coded at 11 columns anymore
-; 2DO: Look for optys to use JR instead of JP
-
 
 ;Finished:
+; 2DO: Look for optys to use JR instead of JP
 ; 2DO: Consider pcol move my 2px instead of 1px;
 ; 2DO: Look for optys to use DJNZ in outer loops; just need to use PUSH BC & POP BC to preserve B!
 ; 2DO: Accept input, adjust pcol left or right
@@ -46,13 +46,12 @@ row EQU rawInput + 2
 ltpart EQU rawInput + 3
 rtpart EQU rawInput + 4
 spriteShift EQU rawInput + 5
-framect EQU rawInput + 7
-vcol EQU rawInput + 11
-vrow EQU rawInput + 12
-pcol EQU rawInput + 13
-prow EQU rawInput + 14
-vmod EQU rawInput + 15
-
+framect EQU rawInput + 6
+vcol EQU rawInput + 7
+vrow EQU rawInput + 8
+vmod EQU rawInput + 9
+pcol EQU rawInput + 10
+prow EQU rawInput + 11
 
 
 .ORG ProgStart - 2
@@ -107,8 +106,8 @@ getInput:
 	JR Z, playerLeft
 	CP skRight 
 	JR Z, playerRight
-	CP skClear							;pressed Clear?
-	RET Z								;exit to system on Clear
+	CP skEnter							;pressed Enter?
+	RET Z								;exit to system on Enter
 	
 	JR mainLoop
 
@@ -280,7 +279,7 @@ _spriteRow:
 	LD (rtpart), A						;store a copy of sprite in rightpart
 	LD A, (spriteShift)					;recall spriteshift
 	CP 0								;compare A to zero
-	JP Z, _leftByte						;if A is zero JP to leftByte, don't do any bit shifting
+	JR Z, _leftByte						;if A is zero JP to leftByte, don't do any bit shifting
 
 	;handle situation where x spans 2 bytes
 	;A contains the shift offset from above
@@ -297,7 +296,7 @@ _spriteRow:
 	LD A, (HL)							;Load A with rtpart value
 	AND B								;apply mask
 	LD (rtpart), A						;rtpart is now masked
-	JP _rightByte
+	JR _rightByte
 	
 _shiftLoop:
 	LD HL, ltpart
