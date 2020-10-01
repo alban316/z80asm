@@ -2,8 +2,6 @@
 ;Backlog:
 ; BUG: For some reason Enter/Clear doesn't quit on RET Z appx line 110
 ; MAYB: Move player in 8px increments instead of smoothly? Enemy will always move smoothly tho!!
-; 2DO: Accept input, spawn missile
-; 2DO: Allow missile animation incl adjust mrow (on a timer)
 ; 2DO: Add animation of sprites, e.g. eyes legs
 ; 2DO: Allow drop bomb incl adjust brow (on a timer)
 ; 2DO: Sprite collision (missile vs invader, player vs invader, player vs bomb)
@@ -15,6 +13,8 @@
 ;;;;;;This will be used to determine left & right max--ugh, but then we won't be hard-coded at 11 columns anymore
 
 ;Finished:
+; 2DO: Accept input, spawn missile
+; 2DO: Allow missile animation incl adjust mrow (on a timer)
 ; 2DO: Look for optys to use JR instead of JP
 ; 2DO: Consider pcol move my 2px instead of 1px;
 ; 2DO: Look for optys to use DJNZ in outer loops; just need to use PUSH BC & POP BC to preserve B!
@@ -40,7 +40,7 @@ screenSize EQU 768
 picData EQU appBackupScreen
 rawInput EQU appBackupScreen + screenSize
 
-;1-byte vars
+
 col EQU rawInput + 1
 row EQU rawInput + 2
 ltpart EQU rawInput + 3
@@ -52,6 +52,10 @@ vrow EQU rawInput + 8
 vmod EQU rawInput + 9
 pcol EQU rawInput + 10
 prow EQU rawInput + 11
+mrow EQU rawInput + 12
+;leave 3 bytes for next var
+mcol EQU rawInput + 15
+;leave 3 bytes for next var
 
 
 .ORG ProgStart - 2
@@ -83,10 +87,19 @@ prow EQU rawInput + 11
 	;init invader (fleet) top row
 	LD A, 0
 	LD (vrow), A
+
+	;init missile rows at 0
+	LD A, 0
+	LD HL, mrow
+	LD (HL), A
+	INC HL
+	LD (HL), A
+	INC HL
+	LD (HL), A
 	
 	;init "timer"
 	LD A, 0
-	PUSH AF
+	PUSH AF								;set initial condition going into mainloop
 
 mainLoop:
 	POP AF								;recall A value as a loop counter
@@ -102,13 +115,14 @@ mainLoop:
 
 getInput:
 	B_CALL(_GetCSC)						;check keypad input
+	CP skUp
+	JR Z, fireMissile					
 	CP skLeft
 	JR Z, playerLeft
 	CP skRight 
 	JR Z, playerRight
-	CP skEnter							;pressed Enter?
-	RET Z								;exit to system on Enter
-	
+	CP skClear							;pressed Clear?
+	RET Z								;exit to system on Clear BUG NOT WORKING!!!! <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 	JR mainLoop
 
 playerLeft:
@@ -129,6 +143,26 @@ playerMove:
 	LD (pcol), A						;save updated position
 	CALL putPlayer						;update the screen buffer
 	JR mainLoop							;keep looping
+
+fireMissile:
+	LD HL, mrow
+	LD IX, mcol
+	LD B, 3								;we have 3 "slots" available for missiles
+
+_eachFiringMissile
+	LD A, (HL)
+	CP 0								;is this slot open? == 0?
+	JR Z, _setMissile					;if so, launch a missile here!
+	INC HL
+	INC IX
+	DJNZ _eachFiringMissile
+	JR mainLoop
+
+_setMissile:
+	LD (HL), $38						;line 56d
+	LD A, (pcol)
+	LD (IX), A
+	JR mainLoop
 
 update:
 	;move invaders right/left
@@ -153,6 +187,7 @@ _justUpdate:
 render:
 	CALL clearGrBuffer
 	CALL putPlayer
+	CALL putMissiles
 
 	LD HL, invaders						;HL must point to invaders before "putInvaders"
 	LD A, (vrow)
@@ -171,6 +206,37 @@ putPlayer:
 	LD A, (pcol)
 	LD (col), A
 	CALL putSprite
+	RET
+
+putMissiles:
+	LD HL, mrow
+	LD IX, mcol
+	LD B, 3
+
+_eachPuttingMissile:
+	PUSH BC
+	LD A, (HL)
+	CP 0								;is this missile in flight? Zer0 = No
+	CALL NZ, _putMissile				;Non-zero = Yes
+	INC HL
+	INC IX
+	POP BC
+	DJNZ _eachPuttingMissile
+	RET
+
+_putMissile:
+										;A already has (HL) which is the mrow.
+	SUB 4								;move missile -4px (upward on screen)
+	LD (HL), A							;commit the update to mrow
+	LD (row), A							;store updated position
+	LD A, (IX)							;now stage (IX) which has the mcol
+	LD (col), A							;Set col
+	PUSH HL
+	PUSH IX
+	LD IX, missile						;Set IX missile required by putsprite
+	CALL putSprite
+	POP IX
+	POP HL
 	RET
 
 putInvaders:
@@ -456,6 +522,16 @@ player:
 .DB %11111110
 .DB %11111110
 .DB %11111110
+
+missile:
+.DB %00000000
+.DB %00000000
+.DB %00000000
+.DB %00001000
+.DB %00001000
+.DB %00000000
+.DB %00000000
+.DB %00000000
 
 ;why not write these as binary masks since that's what they're used for??? <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK
 myMask:
