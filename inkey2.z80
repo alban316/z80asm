@@ -1,0 +1,66 @@
+;test key input
+
+.nolist
+#include "ti83plus.inc"
+#define ProgStart $9D95
+.list
+
+
+
+
+.ORG ProgStart - 2
+
+.db t2ByteTok, tAsmCmp
+
+	;b_call(_RunIndicOff)
+	b_call(_ClrLCDFull)
+	LD HL, 0
+	LD (PenCol), HL							;init cursor column position
+
+KeyLoop:
+	b_call(_GetCSC)
+	CP skUp									; If the up arrow key was pressed.
+	JR Z, MoveUp
+	CP skLeft
+	JR Z, MoveLeft
+	CP skRight 
+	JR Z, MoveRight
+	CP skClear
+	RET Z
+	
+MoveIdle:
+	LD HL, idleMessage
+	JR DispMessage
+	
+MoveUp:
+	LD HL, upMessage
+	JR DispMessage
+
+MoveLeft:
+	LD HL, ltMessage
+	JR DispMessage
+
+MoveRight:
+	LD HL, rtMessage
+
+DispMessage:
+	B_CALL(_PutS)							;OS-specific "output line" function
+	B_CALL(_NewLine)
+	JR KeyLoop								; If any other key was pressed, or none, redo _GetCSC.
+
+
+idleMessage:
+.DB "idle...",0
+
+rtMessage:
+.DB "Right!!",0
+
+upMessage:
+.DB "Up!!!",0
+
+ltMessage:
+.DB "Left!!",0
+
+
+
+.END

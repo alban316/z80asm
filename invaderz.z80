@@ -1,21 +1,32 @@
 ;Space Invaders clone for TI-83
 ;Backlog:
-; BUG: When col (px) spans bytes, sprite is being cutoff
-; 2DO: Accept input, adjust pcol left or right
+; MAYB: Move player in 8px increments instead of smoothly? Enemy will always move smoothly tho!!
 ; 2DO: Accept input, spawn missile
-; 2DO: Move entire fleet of invaders by adjusting vcol (on a timer)
-; 2DO: Add animation of sprites, e.g. eyes legs
 ; 2DO: Allow missile animation incl adjust mrow (on a timer)
+; 2DO: Add animation of sprites, e.g. eyes legs
 ; 2DO: Allow drop bomb incl adjust brow (on a timer)
 ; 2DO: Sprite collision (missile vs invader, player vs invader, player vs bomb)
 ; 2DO: Count lives lost
 ; 2DO: Count invaders killed
 ; 2DO: Blank the invaders element where enemy was killed so nothing renders in that place (or add code to skip putSprite in such cases)
-; 2DO: Have a 2nd copy of "invaders" array that points to left-facing sprites
-; 2DO: In case of blanking an element, be sure to blank both left & right versions!
+; 2DO? Should they keep going back & forth only 8px even after half or more are eliminated? Or should remaining guys use full range?
+;;;;;;I think whenever an enemy is killed, a check should be done for leftmost & rightmost enemy remaining
+;;;;;;This will be used to determine left & right max--ugh, but then we won't be hard-coded at 11 columns anymore
+; 2DO: Look for optys to use JR instead of JP
+
 
 ;Finished:
+; 2DO: Consider pcol move my 2px instead of 1px;
+; 2DO: Look for optys to use DJNZ in outer loops; just need to use PUSH BC & POP BC to preserve B!
+; 2DO: Accept input, adjust pcol left or right
 ; 2DO: Display player sprite
+; 2DO: Move entire fleet of invaders by adjusting vcol (on a timer)
+; BUG: When col (px) spans bytes, sprite is being cutoff
+; NO: Have a 2nd copy of "invaders" array that points to left-facing sprites
+; NO: In case of blanking an element, be sure to blank both left & right versions!
+; There won't be right & left facing sprites. This was going to be a trick to avoid blanking the buffer on each draw cycle
+; But, it's not going to work due to proximity of sprites and need to OR each rendered sprite against existing buffer contents
+
 
 
 .nolist
@@ -35,7 +46,6 @@ row EQU rawInput + 2
 ltpart EQU rawInput + 3
 rtpart EQU rawInput + 4
 spriteShift EQU rawInput + 5
-currow EQU rawInput + 6
 framect EQU rawInput + 7
 loopct EQU rawInput + 8
 curcol EQU rawInput + 9
@@ -44,6 +54,7 @@ vcol EQU rawInput + 11
 vrow EQU rawInput + 12
 pcol EQU rawInput + 13
 prow EQU rawInput + 14
+vmod EQU rawInput + 15
 
 
 
@@ -56,8 +67,8 @@ prow EQU rawInput + 14
 	;with 8px per byte, a row (horizontal line) is 12 bytes
 	;valid range for sprite upper left (col, row) is (0,0) to (88 px,57 px) or ($58, $38)
 
-	CALL clearGrBuffer
-	
+
+
 	;init player row, col
 	LD A, $38
 	LD (prow), A
@@ -69,20 +80,95 @@ prow EQU rawInput + 14
 	LD A, 3
 	LD (vcol), A
 	
+	;init invader (fleet) moving right
+	LD A, 1
+	LD (vmod), A
+	
 	;init invader (fleet) top row
 	LD A, 0
 	LD (vrow), A
 	
+	;init "timer"
+	LD A, 0
+	PUSH AF
+
+mainLoop:
+	POP AF								;recall A value as a loop counter
+	INC A								;increment
+	PUSH AF								;save it
+	CP 0
+	CALL Z, update						;if we've rolled-over 256 to 0 it's time to update & render
+										;later I might decouple update from render
+	AND %00000111						;equivalent of A mod 8
+	CP 0
+	JR Z, getInput						;if 0, let's check for input
+	JR mainLoop							;repeat
+
+getInput:
+	B_CALL(_GetCSC)						;check keypad input
+	CP skLeft
+	JR Z, playerLeft
+	CP skRight 
+	JR Z, playerRight
+	CP skClear							;pressed Clear?
+	RET Z								;exit to system on Clear
+	
+	JR mainLoop
+
+playerLeft:
+	LD A, (pcol)
+	CP 0								;leftmost boundary = 0
+	JR Z, mainLoop						;do nothing & keep looping
+	LD B, $FE							;-2d
+	JR playerMove
+	
+playerRight:
+	LD A, (pcol)
+	CP $58								;rightmost boundary = 88d
+	JR Z, mainLoop						;do nothing & keep looping
+	LD B, 2
+	
+playerMove:
+	ADD A, B							;otherwise g'head and update player col pcol
+	LD (pcol), A						;save updated position
+	CALL putPlayer						;update the screen buffer
+	JR mainLoop							;keep looping
+
+update:
+	;move invaders right/left
+	LD A, (vcol)
+	CP 0								;leftmost boundary is Zero 0
+	JR Z, _toggleDir
+	CP 7								;rightmost boundary is 7
+	JR NZ, _justUpdate
+
+_toggleDir:
+	LD A, (vmod)
+	NEG
+	LD (vmod), A
+
+_justUpdate:
+	LD A, (vmod)
+	LD B, A
+	LD A, (vcol)
+	ADD A, B
+	LD (vcol), A
+	CALL render
+	RET
+
+render:
+	CALL clearGrBuffer
+	CALL putPlayer
+
 	LD A, 4								;HARD CODED FLEET LINES = 4
 	LD (curline), A
 	LD HL, invaders
 	LD A, (vrow)
 	LD (row), A
 	CALL putInvaders
-	
-	CALL putPlayer
-	
+
 	B_CALL(_GrBufCpy)					;finally display the screen buffer!
+
 	RET
 
 putPlayer:
@@ -94,6 +180,7 @@ putPlayer:
 	CALL putSprite
 	RET
 
+;consider DJNZ instead of curline <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK!
 putInvaders:
 	;(row),(vcol) must be initialized
 	;(row) will be destroyed--so keep a copy of it
@@ -121,6 +208,7 @@ putInvaders:
 	
 	JP putInvaders
 
+;consider DJNZ instead of curcol <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK!
 invaderLine:
 	;(row),(col) must be initialized
 	;HL must point to invaders array e.g. LD HL, invaders
@@ -197,14 +285,13 @@ putSprite:
 	LD C, D								;load quotient (column) to C of BC
 	ADD HL, BC							;add (column) offset to HL
 	
-	;init sprite currow at zero
-	;expect IX to contain ptr to sprite
-	LD A, 0
-	LD (currow), A
+	LD B, 8								;_spriteRow to run 8 times via DJNZ
 
 _spriteRow:
+	;expect IX to contain ptr to sprite
 	;draw a 1-byte horizontal row of a sprite
 	;first load the spriterow into memory
+	PUSH BC								;preserve B for DJNZ later
 	LD A, (IX)							;load sprite from IX to A
 	LD (ltpart), A						;store a copy of sprite in leftpart
 	LD (rtpart), A						;store a copy of sprite in rightpart
@@ -255,11 +342,8 @@ _leftByte:
 	ADD HL, BC							;increment HL by 12 for next row
 	INC IX								;increment ptr to spriteRow
 
-	LD A, (currow)
-	INC A								;increment sprite row counter
-	LD (currow), A
-	CP 8								;stop after 8 iterations
-	JP NZ, _spriteRow
+	POP BC
+	DJNZ _spriteRow
 	
 	;used to display sprite here
 	;now moved to outermost loop after all sprites buffered
@@ -360,6 +444,8 @@ sp_sheet:
 .DB %10010010
 
 invaders:
+; Zer0 should be an empty/destroyed enemy <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK
+; also we can eliminate the left-facing stuff since I don't think it'll be used <<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK
 ;offset by index = 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0 
 ;.DB 0, $10, 0, $10, 0, $10, 0, $10, 0, $10, 0
 ;.DB $10, 0, $10, 0, $10, 0, $10, 0, $10, 0, $10
@@ -389,6 +475,7 @@ player:
 .DB %11111110
 .DB %11111110
 
+;why not write these as binary masks since that's what they're used for??? <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK
 myMask:
 .DB 0, $80, $C0, $E0, $F0, $F8, $FC, $FE, $FF
 

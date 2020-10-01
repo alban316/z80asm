@@ -1,4 +1,6 @@
 ;Attempt at graphics on TI-83
+;Revision history:
+;2020-10-01 - 
 
 .nolist
 #include "ti83plus.inc"
@@ -78,13 +80,13 @@ putSprite:
 	ADD HL, BC							;add (column) offset to HL
 	
 	;init sprite currow at zero
-	LD A, 0
-	LD (currow), A
+	LD B, 8								;_spriteRow to run 8 times via DJNZ
 	LD IX, mySprite
 
 _spriteRow:
 	;draw a 1-byte horizontal row of a sprite
 	;first load the spriterow into memory
+	PUSH BC								;preserve B for DJNZ later
 	LD A, (IX)							;load sprite from IX to A
 	LD (ltpart), A						;store a copy of sprite in leftpart
 	LD (rtpart), A						;store a copy of sprite in rightpart
@@ -133,14 +135,10 @@ _leftByte:
 	ADD HL, BC							;increment HL by 12 for next row
 	INC IX								;increment ptr to spriteRow
 	
-	;increment sprite row counter
-	LD A, (currow)
-	INC A
-	LD (currow), A
-	
-	;stop after 8 iterations
-	CP 8
-	JP NZ, _spriteRow
+	;decrement sprite row counter
+	;20201001 - changed from (currow to DJNZ)
+	POP BC
+	DJNZ _spriteRow
 	
 	;display sprite
 	B_CALL(_GrBufCpy)					;display the screen (don't do this until all bytes are set)
@@ -209,6 +207,6 @@ mySprite:
 .DB %00111100
 
 myMask:
-.DB 0, $80, $C0, $E0, $10, $F8, $FC, $FE, $FF
+.DB 0, $80, $C0, $E0, $F0, $F8, $FC, $FE, $FF
 
 .END

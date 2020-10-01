@@ -1,0 +1,50 @@
+;test key input
+;not using getKey, cuz we want to keep working while we're waiting
+
+.nolist
+#include "ti83plus.inc"
+#define ProgStart $9D95
+.list
+
+
+KeyboardScanner_LineCount equ 7
+KeyboardScanner_LineWidth equ 8
+KeyboardScanner_KeyPresses EQU appBackupScreen
+
+.ORG ProgStart - 2
+
+.db t2ByteTok, tAsmCmp
+
+
+Read_Keyboard:
+KeyboardScanner_Read:
+	di
+	ld de,KeyboardScanner_KeyPresses
+	ld h,%10111111  ;First line of keyboard, last is %11111110
+	ld b,7			;7 lines!
+	ld c,1			;Keyboard is port 1, YES 1!!!
+keynextline:
+	out (c),h		;Select port
+	in	a,(c)		;read line
+	ld (de),a		;save keypresses
+	inc de			
+	rrc h			;Move zero to the right
+	djnz keynextline;repeat
+	ei
+KeyboardScanner_AllowJoysticks:
+	ret
+
+	;ifdef UseHardwareKeyMap
+HardwareKeyMap:
+	.db "d","m","2","y","w","z","t","g"
+	.db "a","m","x","x","l","l","s"," "
+	.db "0","1","4","7",",","s","a","t"
+	.db ".","2","5","8",")","c","p","s"
+	.db "-","3","6","9","(","t","v"," "
+	.db 13,"+","-","*","/","^","c"," "
+	.db "d","l","r","u"," "," "," "," " 
+
+	;endif
+
+
+.END
