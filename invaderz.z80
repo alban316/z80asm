@@ -1,5 +1,6 @@
 ;Space Invaders clone for TI-83
 ;Backlog:
+; 2DO: Still haven't recomputed leftmost & rightmost when an enemy is destroyed
 ; BUG: For some reason Enter/Clear doesn't quit on RET Z appx line 110
 ; MAYB: Move player in 8px increments instead of smoothly? Enemy will always move smoothly tho!!
 ; 2DO: Add animation of sprites, e.g. eyes legs
@@ -53,9 +54,12 @@ vmod EQU rawInput + 9
 pcol EQU rawInput + 10
 prow EQU rawInput + 11
 mrow EQU rawInput + 12
-;leave 3 bytes for next var
-mcol EQU rawInput + 15
-;leave 3 bytes for next var
+;leave 6 bytes for next var
+ileftmost EQU rawInput + 18
+irightmost EQU rawInput + 19
+vrightbound EQU rawInput + 20
+numinvaders EQU rawInput + 21
+rowoff EQU rawInput + 22
 
 
 .ORG ProgStart - 2
@@ -88,15 +92,30 @@ mcol EQU rawInput + 15
 	LD A, 0
 	LD (vrow), A
 
-	;init missile rows at 0
-	LD A, 0
+	;init missile rows & cols at 0
+	;mrow is a pointer to mrow,mcol,mrow0,mcol0,mrow1,mcol1
+	LD B, 6
+initMrow:
 	LD HL, mrow
-	LD (HL), A
+	LD (HL), 0
 	INC HL
-	LD (HL), A
-	INC HL
-	LD (HL), A
-	
+	DJNZ initMrow
+
+	;init ileftmost, irightmost, vrightbound
+	LD A, 0
+	LD (ileftmost), A
+	LD A, 10
+	LD (irightmost), A
+	LD A, 7
+	LD (vrightbound), A
+
+	;init numinvaders
+	;needs to match invaders array, btw
+	;entire game is sorta hard-coded for 11 x 4
+	;just an easy way to track game-over condition
+	LD A, 44
+	LD (numinvaders), A
+
 	;init "timer"
 	LD A, 0
 	PUSH AF								;set initial condition going into mainloop
@@ -116,14 +135,26 @@ mainLoop:
 getInput:
 	B_CALL(_GetCSC)						;check keypad input
 	CP skUp
-	JR Z, fireMissile					
+	JR Z, fireMissile
 	CP skLeft
 	JR Z, playerLeft
 	CP skRight 
 	JR Z, playerRight
 	CP skClear							;pressed Clear?
-	RET Z								;exit to system on Clear BUG NOT WORKING!!!! <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+	JP Z, playerQuit					;exit to system on Clear BUG NOT WORKING!!!! <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 	JR mainLoop
+	
+playerQuit:
+	B_CALL(_ClrLCDFull)					;clear screen
+	LD HL, 0
+	LD (PenCol), HL						;init cursor column position
+	LD HL, quitMessage
+	B_CALL(_PutS)						;OS-specific "output line" function
+	B_CALL(_GetKey)						;"input line" function (stores result in A)
+	CP $31								;ASCII "1" for Continue
+	JP Z, mainLoop
+	POP AF								;cleanup last push from mainloop
+	RET
 
 playerLeft:
 	LD A, (pcol)
@@ -145,31 +176,38 @@ playerMove:
 	JR mainLoop							;keep looping
 
 fireMissile:
-	LD HL, mrow
-	LD IX, mcol
-	LD B, 3								;we have 3 "slots" available for missiles
+	LD HL, mrow							;missile row, zer0 indicates inactive flag
+	LD A, 3								;we have 3 "slots" or silos available for missiles
 
-_eachFiringMissile
+_nextSilo:
+	PUSH AF								;save our silo count
 	LD A, (HL)
-	CP 0								;is this slot open? == 0?
+	CP 0								;is this silo ready? == 0?
 	JR Z, _setMissile					;if so, launch a missile here!
-	INC HL
-	INC IX
-	DJNZ _eachFiringMissile
+	INC HL								;inc 1x brings us to mcol which we don't need right now
+	INC HL								;inc 2x to get next mrow
+	POP AF								;recall our silo count
+	DEC A								;decrement silo count
+	CP 0
+	JR NZ, _nextSilo					;not zero so go next silo
 	JR mainLoop
 
 _setMissile:
-	LD (HL), $38						;line 56d
-	LD A, (pcol)
-	LD (IX), A
+	POP AF								;cleanup the previous push
+	LD (HL), $38						;init mrow at line 56d
+	INC HL								;advance to mcol
+	LD A, (pcol)						;stage pcol for...
+	LD (HL), A							;init mcol at pcol
 	JR mainLoop
 
 update:
 	;move invaders right/left
+	LD A, (vrightbound)					;stage vrightbound in A
+	LD B, A								;standby vrightbound in B for compare in a moment
 	LD A, (vcol)
-	CP 0								;leftmost boundary is Zero 0
+	CP 0								;leftmost boundary is always Zero 0px
 	JR Z, _toggleDir
-	CP 7								;rightmost boundary is 7
+	CP B								;vrightbound is 88 - ((rightmost - leftmost) * 8)
 	JR NZ, _justUpdate
 
 _toggleDir:
@@ -209,35 +247,112 @@ putPlayer:
 	RET
 
 putMissiles:
-	LD HL, mrow
-	LD IX, mcol
+	LD HL, mrow							;pointer to mrow array (3 elements of 2b each)
 	LD B, 3
 
-_eachPuttingMissile:
-	PUSH BC
-	LD A, (HL)
+_eachMissile:
+	PUSH BC								;save our B location for DJNZ
+	LD A, (HL)							;mrow
 	CP 0								;is this missile in flight? Zer0 = No
-	CALL NZ, _putMissile				;Non-zero = Yes
+	PUSH HL								;save our pointer before we call updMissile
+	CALL NZ, _updMissile				;Non-zero = Yes
+	POP HL								;whether we called updMissile or not, get our ptr back
 	INC HL
-	INC IX
-	POP BC
-	DJNZ _eachPuttingMissile
+	INC HL								;2x INC gets us to next mrow
+	POP BC								;pop our counter
+	DJNZ _eachMissile
 	RET
 
-_putMissile:
-										;A already has (HL) which is the mrow.
+_updMissile:
+										;HL already points to current mrow index
+										;A already has (HL) value i.e. mrow value
 	SUB 4								;move missile -4px (upward on screen)
 	LD (HL), A							;commit the update to mrow
-	LD (row), A							;store updated position
-	LD A, (IX)							;now stage (IX) which has the mcol
-	LD (col), A							;Set col
-	PUSH HL
-	PUSH IX
-	LD IX, missile						;Set IX missile required by putsprite
+	RET Z								;if we're at 0 - exit
+	
+	;;;;;JP _putMissile						;just skip all the collision for now
+
+										;begin check collision...
+_checkByteRow
+	;to determine which invaders byterow we're in
+	;we do (mrow - vrow) / 8
+	PUSH HL								;preserve HL (mrow pointer)
+	PUSH HL								;preserve HL (mrow pointer) cuz we could need it 2x
+	LD HL, (vrow)						;point HL at vrow i.e. invader row
+	SUB (HL)							;subtract vrow from mrow
+	LD D, A								;stage dividend param (mrow - vrow) for div_d_e
+	LD A, 8
+	LD E, A								;stage divisor param (8) for div_d_e
+	CALL div_d_e						;after this, D will contain quotient i.e. byterow
+	CP 4								;compare to 4
+	JR Z, _checkByteCol					;if row == 4 goto next task
+	JR NC, _checkByteCol				;if A > 4 i.e. row > 4 goto next task
+	POP HL								;cleanup unneeded push (1 of 2) of mrow
+	POP HL								;recall mrow pointer (2 of 2)
+	JR _putMissile						;just display an updated missile
+
+_checkByteCol
+	;we need to do byterow * 11 to help find invaders element
+	;our multiplication subroutine does DE times A
+	LD E, D								;D still holds result from above, move it E
+	LD D, 0
+	LD A, $0B							;11d
+	CALL de_times_a						;after this, HL will contain product
+	LD A, (HL)
+	LD (rowoff), A						;save row offset--can't think of another way to do this
+
+	;first check if mcol > vcol
+	LD A, (vcol)						;stage vcol in A
+	POP HL								;recall mrow pointer (1 of 2 pops) needed to get mcol
+	INC HL								;advance 1 byte to mcol pointer
+	CP (HL)								;compare A vcol to (HL) mcol
+	JR Z, _finalCollision				;if vcol == mcol goto next task
+	JR C, _finalCollision				;if A < (HL) i.e. vcol < mcol i.e. mcol > vcol goto next task
+	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
+	JR _putMissile						;just display an updated missile
+
+_finalCollision
+	;now to determine which bytecol we're in we'll do (mcol - vcol) / 8
+	;for better flow we'll actually do (-vcol + mcol) instead
+	NEG									;A still holds vcol and is now -vcol
+	ADD A,(HL)							;HL still points to mcol; add it to -vcol i.e. (mcol - vcol)
+	LD D, A								;stage result (mcol - vcol) as dividend param for div_d_e
+	LD A, 8
+	LD E, A								;stage divisor param (8) for div_d_e
+	CALL div_d_e						;after this, D will contain quotient i.e. bytecol
+	LD A, (rowoff)						;remember our rowoffset computed earlier
+	LD B, 0
+	LD C, A								;BC now contains our row offset in bytes
+	LD HL, invaders						;recall our invaders array pointer
+	ADD HL, BC							;add our row offset
+	LD C, D								;BC now contains our col offset in bytes
+	ADD HL, BC							;add our col offset & this is it!
+	LD A, (HL)							;what's here?
+	CP 0								;is it empty?
+	JR NZ, _putExplosion				;not empty! replace byte w an explosion!
+	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
+	JR _putMissile						;just display an updated missile
+										;...end check collision
+
+_putExplosion
+	;arrive here with HL pointing to invaders array index
+	LD HL, $28							;40d'th byte is explode frame of sp_sheet
+	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
+	LD (HL), 0							;set mrow to 0 so missile stops flying & silo available
+										;consider setting a flag to flip explosions to 0 in a subsequent step
+										;consider decrementing enemy count to track game over condition
+	RET									;return to caller which was _eachMissile
+
+_putMissile
+	;arrive here with HL pointing to updated mrow
+	LD A, (HL)
+	LD (row), A
+	INC HL
+	LD A, (HL)
+	LD (col), A
+	LD IX, missile
 	CALL putSprite
-	POP IX
-	POP HL
-	RET
+	RET									;return to caller which was _eachMissile
 
 putInvaders:
 	;(row),(vcol) must be initialized
@@ -377,14 +492,16 @@ _rightByte:
 	INC HL								;move one byte ahead for right byte
 	LD A, (rtpart)						;Stage A with right half of sprite bits
 	OR (HL)								;OR with whatever's already there
-	LD (HL), A							;set byte value; i.e. rtpart 
+	LD (HL), A							;set byte value; i.e. rtpart + existing
 	DEC HL								;drop back to original SScreen location 
 	
 _leftByte:
 	;for no bitshift, HL already contains correct SScreen loc, no need to pop
 	LD A, (ltpart)						;Stage A with left half of sprite bits
 	OR (HL)								;OR with whatever's already there
-	LD (HL), A							;set byte value, e.g. ltpart
+	LD (HL), A							;set byte value, e.g. ltpart + existing
+	
+_nextByte:
 	LD B, 0								;B of BC to 0
 	LD C, $0C							;C of BC to 12d
 	ADD HL, BC							;increment HL by 12 for next row
@@ -392,17 +509,7 @@ _leftByte:
 
 	POP BC
 	DJNZ _spriteRow
-	
-	;used to display sprite here
-	;now moved to outermost loop after all sprites buffered
 
-	RET
-
-pressAKeyToQuit:
-	;this is not currently being called 
-	;and doesn't seem to be needed! Cuz screen is not automatically exiting like it did before
-	B_CALL(_GetKey)						;OS-specific "input line" function
-	LD (rawInput), A
 	RET
 
 clearGrBuffer:
@@ -451,7 +558,17 @@ _loop1:
 	RET
 
 sp_sheet:
-;style 0, right facing
+;empty i.e. vanquished invader
+.DB %00000000
+.DB %00000000
+.DB %00000000
+.DB %00000000
+.DB %00000000
+.DB %00000000
+.DB %00000000
+.DB %00000000
+
+;style alpha frame 1
 .DB %00000000
 .DB %01100011
 .DB %00010100
@@ -461,46 +578,51 @@ sp_sheet:
 .DB %01000001
 .DB %00110110
 
-;style 0, left facing
+;style alpha frame 2
 .DB %00000000
-.DB %11000110
-.DB %00101000
-.DB %01111100
-.DB %11010110
-.DB %11111110
-.DB %10000010
-.DB %01101100
+.DB %01100011
+.DB %00010100
+.DB %00111110
+.DB %01101011
+.DB %01111111
+.DB %01010101
+.DB %00100010
 
-;style 1, right facing
+;style beta frame 1
 .DB %00000000
 .DB %00011100
 .DB %00111110
 .DB %01111111
-.DB %01011101
+.DB %01101101
 .DB %01111111
 .DB %00101010
 .DB %01001001
 
-;style 1, left facing
+;style beta frame 2
 .DB %00000000
-.DB %00111000
-.DB %01111100
-.DB %11111110
-.DB %10111010
-.DB %11111110
-.DB %01010100
-.DB %10010010
+.DB %00011100
+.DB %00111110
+.DB %01111111
+.DB %01011011
+.DB %01111111
+.DB %00101010
+.DB %01001001
+
+;style exploded (40d, $28)
+.DB %00000000
+.DB %01001001
+.DB %00101010
+.DB %00000000
+.DB %01100011
+.DB %00000000
+.DB %00101010
+.DB %01001001
 
 invaders:
-; Zer0 should be an empty/destroyed enemy <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK
-; also we can eliminate the left-facing stuff since I don't think it'll be used <<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK
-;offset by index = 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0 
-;.DB 0, $10, 0, $10, 0, $10, 0, $10, 0, $10, 0
-;.DB $10, 0, $10, 0, $10, 0, $10, 0, $10, 0, $10
-.DB 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 .DB $10, $10, $10, $10, $10, $10, $10, $10, $10, $10, $10
-.DB 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+.DB $20, $20, $20, $20, $20, $20, $20, $20, $20, $20, $20
 .DB $10, $10, $10, $10, $10, $10, $10, $10, $10, $10, $10
+.DB $20, $20, $20, $20, $20, $20, $20, $20, $20, $20, $20
 
 player:
 ;right facing
@@ -512,16 +634,6 @@ player:
 .DB %00111110
 .DB %01111111
 .DB %01111111
-
-;left facing
-.DB %00000000
-.DB %00101000
-.DB %00111000
-.DB %01111100
-.DB %11111110
-.DB %11111110
-.DB %11111110
-.DB %11111110
 
 missile:
 .DB %00000000
@@ -536,5 +648,8 @@ missile:
 ;why not write these as binary masks since that's what they're used for??? <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK
 myMask:
 .DB 0, $80, $C0, $E0, $F0, $F8, $FC, $FE, $FF
+
+quitMessage:
+.DB "Press 1 to Continue. Any other key to Quit.",0
 
 .END
