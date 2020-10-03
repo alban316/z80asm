@@ -1,0 +1,72 @@
+On finding the invaders' element at a given x, y pixel coordinate.
+
+REMINDER:
+'invaders' is an array consisting of a style (or absence) of enemy for every column (of 11) and row (of 4).
+
+Only the upper y and left x are tracked using vrow and vcol, respectively, for display purposes.
+
+Every plotted invader is relative to this location in multiples of 8px horizontal and 8px vertical.
+
+PROPOSED ALGORITHM:
+Remember, we're just trying to find the element in the array that we need to flip to Zer0. Has nothing to do with display.
+Subtract vcol (px) from player pcol (px).
+This will yield the column in px of the target enemy, left justified.
+Now, take this result / 8 and you have the horizontal element.
+Take this * row and we have the element. See edge case, below.
+Check if any non-zero value at this element.
+
+Now, do the following:
+1. Using this element location, flip it to Zer0.
+2. Using the px location, putSprite explosion & B_CALL(_GrBufCpy) -- or just render
+3. Subtract from enemyCount
+4. Set this mrow to 0
+
+Implementation:
+Using row, col as set before calling putSprite
+call checkVCollision
+returns HL element location
+
+
+EDGE CASE:
+As enemies are destroyed, the leftmost elements (now empty) are no longer rendered.
+As part of the display algorithm, range of motion is increased and no longer limited to vcol of 0 to 8 as in the beginning.
+So, in the proposed algorithm, we must still subtract vcol from pcol. But, then we need to add qty (8px * leftmost) before we divide by 8 to get the element column. (This effectively "adds back in" the missing enemies (in px), an element for whom still remains in the original array).
+
+PREREQS:
+#1 Currently there's no routine for leftmost & rightmost.
+Naivety during prototyping didn't allow for range of motion to increase as enemies are destroyed.
+Whenever an enemy is destroyed, we need to recompute leftmost and rightmost.
+It should be a column number of 0 to 10.
+This will be used during display (see below) and collision detection (see edge case).
+
+#2 Need to reorder the invaders spritesheet so that 0 is blank. Update invaders array accordingly.
+
+#3 During display:
+(Prototype was 0px and 7px for boundaries, left & right)
+
+0 is still left boundary
+Right boundary is 88 - ((rightmost - leftmost) * 8)
+Don't add 8px for any Zer0 element of invaders
+
+TEST:
+ileftmost = 0;irightmost = 10
+87 - ((10 - 0) * 8) = 7
+
+ileftmost = 1;irightmost = 10 i.e. left edge enemies are destroyed
+87 - ((10 - 1) * 8) = 15
+
+ileftmost = 1;irightmost = 9 i.e. both left & right edge enemies are destroyed
+87 - ((9 - 1) * 8) = 23
+
+HOW TO DETERMINE ileftmost, irightmost?
+step through each element of each row of invaders array
+for each row, count number of 0 elements before encountering a non-zero entry
+"for each row" means restart the count after 11 steps
+first row inits ileftmost
+if subsequent count is greater than previously determined ileftmost, ignore it
+if subsequent count is less than previously determined ileftmost, it is the new ileftmost
+
+For irightmost
+As above, but step through each element of each row, going backwards
+after we get the counts (which will be elements from the right, not the left)
+we need to do 10 - count to convert to #elements from the left
