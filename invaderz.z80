@@ -140,8 +140,8 @@ getInput:
 	JR Z, playerLeft
 	CP skRight 
 	JR Z, playerRight
-	CP skClear							;pressed Clear?
-	JP Z, playerQuit					;exit to system on Clear BUG NOT WORKING!!!! <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+	CP skClear
+	JP Z, playerQuit
 	JR mainLoop
 	
 playerQuit:
@@ -151,8 +151,8 @@ playerQuit:
 	LD HL, quitMessage
 	B_CALL(_PutS)						;OS-specific "output line" function
 	B_CALL(_GetKey)						;"input line" function (stores result in A)
-	CP $31								;ASCII "1" for Continue
-	JP Z, mainLoop
+	CP $31								;ASCII "1" for Continue <<<<<<<<<<<<<<<<<<<<<<<<<<<< not working
+	JR Z, mainLoop
 	POP AF								;cleanup last push from mainloop
 	RET
 
@@ -270,35 +270,36 @@ _updMissile:
 	LD (HL), A							;commit the update to mrow
 	RET Z								;if we're at 0 - exit
 	
-	;;;;;JP _putMissile						;just skip all the collision for now
+	;;;;;;;JP __putMissile						;just skip all the collision for now
 
 										;begin check collision...
-_checkByteRow
+__checkByteRow
 	;to determine which invaders byterow we're in
 	;we do (mrow - vrow) / 8
 	PUSH HL								;preserve HL (mrow pointer)
 	PUSH HL								;preserve HL (mrow pointer) cuz we could need it 2x
-	LD HL, (vrow)						;point HL at vrow i.e. invader row
+	LD HL, vrow							;point HL at vrow i.e. invader row
 	SUB (HL)							;subtract vrow from mrow
 	LD D, A								;stage dividend param (mrow - vrow) for div_d_e
 	LD A, 8
 	LD E, A								;stage divisor param (8) for div_d_e
 	CALL div_d_e						;after this, D will contain quotient i.e. byterow
-	CP 4								;compare to 4
-	JR Z, _checkByteCol					;if row == 4 goto next task
-	JR NC, _checkByteCol				;if A > 4 i.e. row > 4 goto next task
+	LD A, D								;stage quotient in A for comparison
+	CP 3								;compare to 3 (4th row, zero based)
+	JR Z, __checkByteCol				;if row == 4 goto next task
+	JR C, __checkByteCol				;if A < 4 i.e. row < 4 goto next task
 	POP HL								;cleanup unneeded push (1 of 2) of mrow
 	POP HL								;recall mrow pointer (2 of 2)
-	JR _putMissile						;just display an updated missile
+	JR __putMissile						;just display an updated missile
 
-_checkByteCol
+__checkByteCol
 	;we need to do byterow * 11 to help find invaders element
 	;our multiplication subroutine does DE times A
 	LD E, D								;D still holds result from above, move it E
 	LD D, 0
 	LD A, $0B							;11d
 	CALL de_times_a						;after this, HL will contain product
-	LD A, (HL)
+	LD A, L								;more accurately L holds our 8-bit product
 	LD (rowoff), A						;save row offset--can't think of another way to do this
 
 	;first check if mcol > vcol
@@ -306,12 +307,12 @@ _checkByteCol
 	POP HL								;recall mrow pointer (1 of 2 pops) needed to get mcol
 	INC HL								;advance 1 byte to mcol pointer
 	CP (HL)								;compare A vcol to (HL) mcol
-	JR Z, _finalCollision				;if vcol == mcol goto next task
-	JR C, _finalCollision				;if A < (HL) i.e. vcol < mcol i.e. mcol > vcol goto next task
+	JR Z, __finalCollision				;if vcol == mcol goto next task
+	JR C, __finalCollision				;if A < (HL) i.e. vcol < mcol i.e. mcol > vcol goto next task
 	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
-	JR _putMissile						;just display an updated missile
+	JR __putMissile						;just display an updated missile
 
-_finalCollision
+__finalCollision
 	;now to determine which bytecol we're in we'll do (mcol - vcol) / 8
 	;for better flow we'll actually do (-vcol + mcol) instead
 	NEG									;A still holds vcol and is now -vcol
@@ -319,31 +320,30 @@ _finalCollision
 	LD D, A								;stage result (mcol - vcol) as dividend param for div_d_e
 	LD A, 8
 	LD E, A								;stage divisor param (8) for div_d_e
-	CALL div_d_e						;after this, D will contain quotient i.e. bytecol
+	CALL div_d_e						;after this, D will contain quotient i.e. bytecol aka column offset
 	LD A, (rowoff)						;remember our rowoffset computed earlier
+	ADD A, D							;add column offset
 	LD B, 0
 	LD C, A								;BC now contains our row offset in bytes
 	LD HL, invaders						;recall our invaders array pointer
-	ADD HL, BC							;add our row offset
-	LD C, D								;BC now contains our col offset in bytes
-	ADD HL, BC							;add our col offset & this is it!
+	ADD HL, BC							;add our total offset to HL
 	LD A, (HL)							;what's here?
 	CP 0								;is it empty?
-	JR NZ, _putExplosion				;not empty! replace byte w an explosion!
+	JR NZ, __putExplosion				;not empty! replace byte w an explosion!
 	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
-	JR _putMissile						;just display an updated missile
+	JR __putMissile						;just display an updated missile
 										;...end check collision
 
-_putExplosion
+__putExplosion
 	;arrive here with HL pointing to invaders array index
-	LD HL, $28							;40d'th byte is explode frame of sp_sheet
+	LD (HL), 0  ;$28						;40d'th byte is explode frame of sp_sheet
 	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
 	LD (HL), 0							;set mrow to 0 so missile stops flying & silo available
 										;consider setting a flag to flip explosions to 0 in a subsequent step
 										;consider decrementing enemy count to track game over condition
 	RET									;return to caller which was _eachMissile
 
-_putMissile
+__putMissile
 	;arrive here with HL pointing to updated mrow
 	LD A, (HL)
 	LD (row), A
