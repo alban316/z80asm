@@ -240,25 +240,98 @@ render:
 
 	B_CALL(_GrBufCpy)					;finally display the screen buffer!
 
-	;check if any explosions need to be flipped
-	;also check game-over (we waited until here to display final explosion before ending)
+;check if any explosions need to be flipped
+;also check game-over condition (we waited until here to display final explosion before ending)
 	LD A, (explodedFlag)
 	CP 0
-	RET Z
+	RET Z								;flag is zero so just return to caller
 
-	;okay so we have to flip some explosions to zero easy peasy
-	LD A, $28							;explosion byte pointer in sp_sheet
-	LD B, $2C							;we will loop 44d times for each invaders byte
-	LD HL, invaders
-_cleanupLoop:
-	CP (HL)								;compare memory with $28 explosion pointer
-	JR NZ, _skipCleanup					;not matched, don't modify
-	LD (HL), 0							;else set to zero blank
-_skipCleanup:
-	INC HL								;next byte
-	DJNZ _cleanupLoop
+	;else flag IS not zero & we have some cleanup to do
+	;1. must reset explosion flag to 0
+	;2. must set all active explosions to blank
+	;3. must re-evaluate ileftmost & irightmost & vrightbound
+	LD HL, explodedFlag
+	LD (HL), 0							;reset exploded flag
+	LD HL, invaders + $2B				;work backward from +43d i.e. end of array 
+	LD B, $0B							;loop 11d times outer
+	LD D, 0								;ileftmost temp storage
+	LD E, 0								;irightmost temp storage
 
-	RET									;return to caller which was mainloop via call to update
+_updLRouter
+	;must go through entire byte array by column
+	;outer loop x11, e.g. 43,42,41,40,39,38,37,36,35,34,33
+	;inner loop x4, e.g. 43,32,21,10...42,31,20,9...41,30,19,8...etc
+	;any non-zero value makes this the irightmost column
+	;as soon as irightmost is set, we don't update it again
+	;any non-zero also sets ileftmost, but we keep updating for the whole loop
+	PUSH HL								;preserve our initial position e.g. invaders + 43d
+	LD A, 4								;always loop 4 times inner
+
+__updLRinner
+	PUSH AF								;preserve rowcount
+
+__checkExplosion
+	;is there an explosion here 2 b cleared?
+	LD A, $28							;explosion byte pointer corresponds to sp_sheet
+	CP (HL)								;compare invaders byte
+	JR NZ, __checkEmpty					;not explosion so just check empty
+	LD (HL), 0							;set empty
+	
+__checkEmpty
+	;empty? if so it can't be leftmost or rightmost
+	LD A, 0
+	CP (HL)								;compare to zero
+	JR NZ, __updL						;non-zero so we will set leftmost & conditionally rightmost, too
+	JR __contLRrow						;it's evidently empty so no action
+
+__updL
+	LD D, B
+	
+__updR
+	CP E
+	JR NZ, __contLRrow					;if E is already nonzero we leave it alone
+	LD E, B								;set it 
+
+__contLRrow
+	POP AF								;recall our rowcount
+	DEC A								;decrement rowcount
+	PUSH BC								;preserve our outer column counter/marker
+	LD B, $FF							;remeber HL + BC is 16-bit math so set B accordingly
+	LD C, $F5							;-11d is next row
+	ADD HL, BC							;move to next row, same column
+	POP BC								;recall our outer column counter/marker
+	CP 0								;is A inner counter zero?
+	JR NZ, __updLRinner
+
+_contLRouter
+	POP HL								;recall outer place in invaders, e.g. invaders + 43
+	DEC HL								;drop down 1 byte, e.g. from n + 43 to n + 42
+	DJNZ _updLRouter
+	
+	;finished now we need to save these values
+	;D & E are both 1 too high since DJNZ runs from 11 to 1 instead of 10 to 0
+	LD HL, ileftmost					;point to ileftmost
+	LD (HL), D							;commit update to ileftmost
+	LD A, E								;stage irightmost value
+	LD (irightmost), A					;commit update to irightmost
+
+	;recompute vrightbound
+	LD A, (irightmost)
+	
+	;don't think I need or want these...
+	;LD HL, ileftmost
+	;SUB (HL)							;subtract ileftmost from irightmost
+	
+	NEG									;make the quantity negative
+	ADD A, $0B							;add it to 11 so we finally have 11 - (iR - iL)
+	LD D,0								;prep to mult qty (A) times 8 recall DE * A = HL 
+	LD E,8								;A already contains our quantity
+	CALL de_times_a
+	LD A,L								;retrieve 8-bit product from HL
+	DEC A
+	LD (vrightbound), A
+	
+	RET									;finally return to caller
 
 putPlayer:
 	LD IX, player						;loads right-facing version
@@ -292,10 +365,8 @@ _updMissile:
 	SUB 4								;move missile -4px (upward on screen)
 	LD (HL), A							;commit the update to mrow
 	RET Z								;if we're at 0 - exit
-	
-	;;;;;;;JP __putMissile						;just skip all the collision for now
 
-										;begin check collision...
+	;begin check collision...
 __checkByteRow
 	;to determine which invaders byterow we're in
 	;we do (mrow - vrow) / 8
@@ -351,11 +422,13 @@ __finalCollision
 	LD HL, invaders						;recall our invaders array pointer
 	ADD HL, BC							;add our total offset to HL
 	LD A, (HL)							;what's here?
+	CP $28								;is there an explosion here from previous loop? (unlikely condition)
+	JR Z, __skipExplosion				;skip it dont put another explosion but do process missile
 	CP 0								;is it empty?
 	JR NZ, __putExplosion				;not empty! replace byte w an explosion!
 	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
 	JR __putMissile						;just display an updated missile
-										;...end check collision
+	;...end check collision
 
 __putExplosion
 	;arrive here with HL pointing to invaders array index
@@ -368,6 +441,9 @@ __putExplosion
 	DEC A
 	LD (enemyCount), A
 	RET									;return to caller which was _eachMissile
+
+__skipExplosion
+	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
 
 __putMissile
 	;arrive here with HL pointing to updated mrow
