@@ -1,19 +1,19 @@
 ;Space Invaders clone for TI-83
 ;Backlog:
-; 2DO: Still haven't recomputed leftmost & rightmost when an enemy is destroyed
-; BUG: For some reason Enter/Clear doesn't quit on RET Z appx line 110
+; 2DO: Set a flag when an exploded enemy has occurred
+; ...after the next run of putSprite, clear any explodes & replace with zero
+; 2DO: Add range of motion (i.e. upd leftmost & rightmost) when an enemy is destroyed
 ; MAYB: Move player in 8px increments instead of smoothly? Enemy will always move smoothly tho!!
 ; 2DO: Add animation of sprites, e.g. eyes legs
 ; 2DO: Allow drop bomb incl adjust brow (on a timer)
-; 2DO: Sprite collision (missile vs invader, player vs invader, player vs bomb)
+; 2DO: Sprite collision (player vs invader, player vs bomb)
 ; 2DO: Count lives lost
 ; 2DO: Count invaders killed
-; 2DO: Blank the invaders element where enemy was killed so nothing renders in that place (or add code to skip putSprite in such cases)
-; 2DO? Should they keep going back & forth only 8px even after half or more are eliminated? Or should remaining guys use full range?
-;;;;;;I think whenever an enemy is killed, a check should be done for leftmost & rightmost enemy remaining
-;;;;;;This will be used to determine left & right max--ugh, but then we won't be hard-coded at 11 columns anymore
 
 ;Finished:
+; 2DO: Blank the invaders element where enemy was killed so nothing renders in that place
+; BUG: For some reason Enter/Clear doesn't quit on RET Z appx line 110
+; 2DO: Sprite collision (missile vs invader, 
 ; 2DO: Accept input, spawn missile
 ; 2DO: Allow missile animation incl adjust mrow (on a timer)
 ; 2DO: Look for optys to use JR instead of JP
@@ -58,8 +58,9 @@ mrow EQU rawInput + 12
 ileftmost EQU rawInput + 18
 irightmost EQU rawInput + 19
 vrightbound EQU rawInput + 20
-numinvaders EQU rawInput + 21
+enemyCount EQU rawInput + 21
 rowoff EQU rawInput + 22
+explodedFlag EQU rawInput + 23
 
 
 .ORG ProgStart - 2
@@ -102,19 +103,23 @@ initMrow:
 	DJNZ initMrow
 
 	;init ileftmost, irightmost, vrightbound
-	LD A, 0
-	LD (ileftmost), A
-	LD A, 10
-	LD (irightmost), A
-	LD A, 7
-	LD (vrightbound), A
+	LD HL, ileftmost
+	LD (HL), 0
+	LD HL, irightmost
+	LD (HL), $0A						;10d is zero-based right column index
+	LD HL, vrightbound
+	LD (HL), 7
 
 	;init numinvaders
 	;needs to match invaders array, btw
-	;entire game is sorta hard-coded for 11 x 4
+	;entire game is hard-coded for 11 x 4
 	;just an easy way to track game-over condition
-	LD A, 44
-	LD (numinvaders), A
+	LD HL, enemyCount
+	LD (HL), $2C						;44d enemies to start
+
+	;init explodedFlag
+	LD HL, explodedFlag
+	LD (HL), 0
 
 	;init "timer"
 	LD A, 0
@@ -235,7 +240,25 @@ render:
 
 	B_CALL(_GrBufCpy)					;finally display the screen buffer!
 
-	RET
+	;check if any explosions need to be flipped
+	;also check game-over (we waited until here to display final explosion before ending)
+	LD A, (explodedFlag)
+	CP 0
+	RET Z
+
+	;okay so we have to flip some explosions to zero easy peasy
+	LD A, $28							;explosion byte pointer in sp_sheet
+	LD B, $2C							;we will loop 44d times for each invaders byte
+	LD HL, invaders
+_cleanupLoop:
+	CP (HL)								;compare memory with $28 explosion pointer
+	JR NZ, _skipCleanup					;not matched, don't modify
+	LD (HL), 0							;else set to zero blank
+_skipCleanup:
+	INC HL								;next byte
+	DJNZ _cleanupLoop
+
+	RET									;return to caller which was mainloop via call to update
 
 putPlayer:
 	LD IX, player						;loads right-facing version
@@ -336,11 +359,14 @@ __finalCollision
 
 __putExplosion
 	;arrive here with HL pointing to invaders array index
-	LD (HL), 0  ;$28						;40d'th byte is explode frame of sp_sheet
+	LD (HL), $28						;40d'th byte is explode frame of sp_sheet
 	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
 	LD (HL), 0							;set mrow to 0 so missile stops flying & silo available
-										;consider setting a flag to flip explosions to 0 in a subsequent step
-										;consider decrementing enemy count to track game over condition
+	LD HL, explodedFlag
+	LD (HL), 1							;set explodedFlag = 1 (True)
+	LD A, (enemyCount)
+	DEC A
+	LD (enemyCount), A
 	RET									;return to caller which was _eachMissile
 
 __putMissile
