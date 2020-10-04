@@ -1,8 +1,6 @@
 ;Space Invaders clone for TI-83
 ;Backlog:
-; 2DO: Set a flag when an exploded enemy has occurred
-; ...after the next run of putSprite, clear any explodes & replace with zero
-; 2DO: Add range of motion (i.e. upd leftmost & rightmost) when an enemy is destroyed
+; 2DO: account for missile byte shift. maybe use mcol + 5 due to sprite design?
 ; MAYB: Move player in 8px increments instead of smoothly? Enemy will always move smoothly tho!!
 ; 2DO: Add animation of sprites, e.g. eyes legs
 ; 2DO: Allow drop bomb incl adjust brow (on a timer)
@@ -11,6 +9,9 @@
 ; 2DO: Count invaders killed
 
 ;Finished:
+; 2DO: Set a flag when an exploded enemy has occurred
+; ...after the next run of putSprite, clear any explodes & replace with zero
+; 2DO: Add range of motion (i.e. upd leftmost & rightmost) when an enemy is destroyed
 ; 2DO: Blank the invaders element where enemy was killed so nothing renders in that place
 ; BUG: For some reason Enter/Clear doesn't quit on RET Z appx line 110
 ; 2DO: Sprite collision (missile vs invader, 
@@ -310,25 +311,22 @@ _contLRouter
 	
 	;finished now we need to save these values
 	;D & E are both 1 too high since DJNZ runs from 11 to 1 instead of 10 to 0
-	LD HL, ileftmost					;point to ileftmost
-	LD (HL), D							;commit update to ileftmost
-	LD A, E								;stage irightmost value
-	LD (irightmost), A					;commit update to irightmost
-
-	;recompute vrightbound
-	LD A, (irightmost)
+	LD A, D								;stage ileftmost
+	DEC A
+	LD (ileftmost), A					;commit recalc'd ileftmost
+	LD A, E								;stage irightmost
+	DEC A
+	LD (irightmost), A					;commit recalc'd irightmost
 	
-	;don't think I need or want these...
-	;LD HL, ileftmost
-	;SUB (HL)							;subtract ileftmost from irightmost
-	
+	;recompute vrightbound as (10 - irightmost) * 8 + 7
+	;A already holds irightmost
 	NEG									;make the quantity negative
-	ADD A, $0B							;add it to 11 so we finally have 11 - (iR - iL)
-	LD D,0								;prep to mult qty (A) times 8 recall DE * A = HL 
+	ADD A, $0A							;A holds (10 - irightmost)
+	LD D,0								;prep to multiply quantity times 8 recall DE * A = HL 
 	LD E,8								;A already contains our quantity
 	CALL de_times_a
 	LD A,L								;retrieve 8-bit product from HL
-	DEC A
+	ADD A, 7							;add 7px
 	LD (vrightbound), A
 	
 	RET									;finally return to caller
@@ -740,10 +738,10 @@ player:
 missile:
 .DB %00000000
 .DB %00000000
-.DB %00000000
 .DB %00001000
 .DB %00001000
-.DB %00000000
+.DB %00001000
+.DB %00001000
 .DB %00000000
 .DB %00000000
 
