@@ -167,15 +167,14 @@ playerLeft:
 	LD A, (pcol)
 	CP 0								;leftmost boundary = 0
 	JR Z, mainLoop						;do nothing & keep looping
-	;LD B, $FE							;-2d
-	LD B, $F8							;-8d
+	LD B, $FC							;-4d
 	JR playerMove
 	
 playerRight:
 	LD A, (pcol)
 	CP $58								;rightmost boundary = 88d
 	JR Z, mainLoop						;do nothing & keep looping
-	LD B, 8
+	LD B, 4
 	
 playerMove:
 	ADD A, B							;otherwise g'head and update player col pcol
@@ -277,91 +276,97 @@ _updMissile:
 	SUB 4								;move missile -4px (upward on screen)
 	LD (HL), A							;commit the update to mrow
 	RET Z								;if we're at 0 - exit
-	LD (row), A							;init (row) for eventual _putMissile
-	
+	LD (row), A							;init (row) for _putMissile <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< init (row)
+
 ;begin collision check
-	PUSH HL								;save mrow pointer
-	
-	;#1 get byte row of the missile
-	LD D, A								;A already holds updated mrow
-	LD E, 8
-	CALL div_d_e						;divide mcol / 8 to get byte row
-
-_checkRows
-	;every row is the same so just use roffs of first column
-	LD HL, invaders
-	LD B, 4
-	
-_checkRow
-	;#2 get byte row(s) of invader(s)
-	;loop over 4x rows until matched
-	PUSH DE								;save #1 quotient again
-	INC HL								;first element is sprite style
-	INC HL								;next is roff
+	;check row - is mrow even high enough to hit?
 	LD A, (vrow)
-	LD D, (HL)
-	ADD A, D							;vrow + roff
-	LD D, A
-	LD E, 8
-	CALL div_d_e						;divide (vrow + roff) / 8 to get row
-	LD A, D								;stage quotient in accumulator
-	POP DE								;recall our quotient from #1
-	CP D								;compare quotients
-	JR Z, _checkCols
-	DEC B
-	LD A, 0
-	CP B
-	JR Z, _skipCols						;no match found
-	JR _checkRow
-	
+	LD B, A								;stage vrow in B
+	LD A, (HL)							;retrieve mrow in A
+	SUB B								;subtract vrow from mrow
+	LD D, A								;load dividend to D
+	LD E, 8								;load divisor to E
+	CALL div_d_e						;quotient will be in D--this is bytecount for column
+	LD A, D								;stage quotient
+	CP 4								;compare to 4
+	JR Z, _checkCols					;equal 4 so g'head
+	JR NC, _skipCol						;greater than 4 it's not a hit yet
+
 _checkCols
-	;#3 get byte column of the missile
-	POP HL								;restore mrow pointer
-	INC HL								;get mcol pointer
-	LD A, (HL)							;get mcol value
-	LD (col), A							;init (col) for eventual _putMissile
-	LD D, A
-	LD E, 8
-	CALL div_d_e						;divide mcol / 8 to get byte column
-
-	LD HL,invaders
-	LD B, $0B
-	
-_checkCol
-	;#4 find invader(s) in this column, if any
-	;loop over columns until matched
-	PUSH DE								;preserve our quotient from #3
-	PUSH BC								;preserve our rowcount (destroyed below by ADD HL,BC & div_d_e)
+	PUSH HL								;save our mrow pointer
+	INC HL								;HL still points to mrow, advance to mcol
 	LD A, (vcol)
-	LD D, (HL)
-	ADD A, D							;vcol + coff
-	LD D, A
-	LD E, 8
-	CALL div_d_e						;divide (vcol + coff) / 8 to get byte column
-	LD A, D								;stage quotient in accumulator
-	POP DE								;recall #2 quotient
-	CP D								;compare quotients
-	JR Z, _collision
+	LD B, A								;stage vcol in B
+	LD A,(HL)							;retrieve mcol in A
+	LD (col), A							;init (col) for _putMissile
+	SUB B								;subtract vcol from mcol
+	JR C, _skipRow						;if it's negative just put missile
+	AND %11111000						;normalize to 0,8,16,24,32...
+	CP $50								;compare to 80d
+	JR NC, _skipRow						;if it's greater than 80d just putmissile
+	LD B, $0B							;iterate max of 11d times
+	LD HL, invaders
+
+_checkCol
+										;A contains coff target value
+	CP (HL)								;is this coff a match to target coff in A?
+	JR Z, __match						;if yes, process rows in this column
+	JR __cont							;no match, go next
+
+__match
+	PUSH BC								;save our count
+	PUSH HL								;save HL coff pointer
+	PUSH AF								;preserve our coff target value
 	LD B,0
-	LD C,9
-	ADD HL,BC							;skip 9 bytes to next column
-	POP BC								;recall our rowcount
-	DEC B
+	LD C, D								;D still holds our quotient which is roff
+	ADD HL, BC							;now pointing at col + row
+	LD A, (HL)							;examine invaders contents
+	CP 0								;compare to 0 empty
+	JR Z, __skipExplosion				;if Z, nothing's here
+	CP $28								;compare to explosion
+	JR Z, __skipExplosion				;if Z, nothing's here but a leftover explosion
+	LD (HL), $28						;put an explosion here
+	LD HL, explodedFlag
+	LD (HL), 1							;set flag
+	
+__skipExplosion
+	POP AF								;recall coff target value
+	POP HL								;recall HL coff pointer
+	POP BC								;recall our counter
+
+__cont
+	PUSH BC								;save our count
+	LD B,0
+	LD C,5								;init BC to 5 bytes
+	ADD HL, BC							;advance 5 bytes
+	POP BC								;recall count
+	DJNZ _checkCol						;loop
+	
+	POP HL								;recall mrow
+	LD A, (explodedFlag)
+	CP 1
+	JR NZ, _putMissile					;Flag is not set
+										;if flag is set Z just keep going
+	LD (HL), 0							;set mrow flag to 0 only if flag was set
 	LD A, 0
-	CP B
-	JR Z, _putMissile					;no match found
-	JR _checkCols
+	LD (explodedFlag), A				;turn off exploded flag
 
-_collision
-	;at this byte
+	;;;;;decrement invader count,too
+	;;;;;elsewhere we will do a TTL for explosions & also reset the leftmost & rightmost via updates to coff's
 
-_skipCols
-	POP HL								;restore mrow pointer
-	INC HL								;get mcol pointer
+	JR _putMissile
+
+_skipCol
+	INC HL								;HL still pointed at mrow
 	LD A, (HL)
 	LD (col), A
+	JR _putMissile
+
+_skipRow
+	POP HL								;recall mrow & continue
 
 _putMissile
+	;arrive here with col & row init'd for putSprite
 	LD IX, missile
 	CALL putSprite
 	RET									;return to caller which was _eachMissile via _updMissile
@@ -386,22 +391,19 @@ _putInvaderCol:
 	ADD A, D							;vcol + coff
 	LD D, A								;commit sum to D
 	PUSH BC								;preserve iteration (outer) count
+	LD A, (vrow)
+	LD E, A								;initial vrow|roff
 	LD B, 4
 
 _putInvader
-	INC HL								;next element is byte offset of sp_sheet
+	INC HL								;next element is sp_sheet offset (spoff)
 	PUSH BC								;preserve iteration (inner) count
 	LD B, 0
 	LD C, (HL)							;stage BC with byte offset
 	LD IX, sp_sheet
 	ADD IX, BC							;IX now points to correct sprite frame
-	INC HL								;next element is roff
-	LD A, (vrow)
-	LD E, (HL)							;roff
-	ADD A,E								;vrow + roff
-	LD E, A								;commit sum to E
 	PUSH HL								;preserve our place in invaders
-	PUSH DE								;preserve our vcol + coff, don't care about E
+	PUSH DE								;preserve our vcol + coff, vrow + cumulative roff
 	LD HL, col
 	LD (HL), D							;init col for putSprite
 	LD HL, row
@@ -410,13 +412,16 @@ _putInvader
 	POP DE								;recall our vcol + coff
 	POP HL								;recall our place in invaders
 	POP BC								;recall our iteration count (inner)
+	LD A, E								;recall roff
+	ADD A, 8							;add 8
+	LD E, A								;commit sum to E
 	DJNZ _putInvader
-	
+
 	POP BC
 	INC HL								;next element is coff
 	DJNZ _putInvaderCol
 	RET
-	
+
 ;anim:
 	;(framect) must be initialized
 	;IX must be pre-loaded with sprite, e.g. LD IX, pacman
@@ -633,18 +638,18 @@ sp_sheet:
 .DB %01001001
 
 invaders:
-;  coff, styl, roff, styl, roff, styl, roff, style, roff
-.DB   0,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB   8,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $10,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $18,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $20,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $28,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $30,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $38,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $40,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $48,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $50,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
+;  coff, styles...
+.DB   0, $10, $20, $10, $20
+.DB   8, $10, $20, $10, $20
+.DB $10, $10, $20, $10, $20
+.DB $18, $10, $20, $10, $20
+.DB $20, $10, $20, $10, $20
+.DB $28, $10, $20, $10, $20
+.DB $30, $10, $20, $10, $20
+.DB $38, $10, $20, $10, $20
+.DB $40, $10, $20, $10, $20
+.DB $48, $10, $20, $10, $20
+.DB $50, $10, $20, $10, $20
 
 player:
 ;right facing

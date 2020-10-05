@@ -1,0 +1,58 @@
+;begin collision check
+	;check row - is mrow even high enough to hit?
+	LD A, (vrow)
+	LD B, A								;stage vrow in B
+	LD A, (HL)							;retrieve mrow in A
+	SUB B								;subtract vrow from mrow
+	AND %11111000						;normalize to 0,8,16,24,32...
+	CP $19								;25d
+	JR C, _checkCols					;A is less than 25d so yes it's high enough
+	JR _skipCols						;skip column check & putMissile
+	PUSH AF								;preserve target roff value
+
+_checkCols
+	INC HL								;HL still points to mrow, advance to mcol
+	LD A, (vcol)
+	LD B, A								;stage vcol in B
+	LD A,(HL)							;retrieve mcol in A
+	LD (col), A							;init (col) for _putMissile
+	SUB B								;subtract vcol from mcol
+	JR C, _skipMatch					;if it's negative just put missile
+	AND %11111000						;normalize to 0,8,16,24,32...
+	CP $51								;compare to 80d
+	JR NC, _skipMatch					;if it's greater than 80d just putmissile
+
+	;A contains coff value
+	;don't need to save HL since (col, row) already init'd
+	LD B, $0B							;iterate max of 11d times
+	LD HL, invaders
+	
+_checkCol
+	CP (HL)								;is this coff a match to target coff in A?
+	JR Z, _matchCol						;if yes, go to match
+	DEC B								;decrement count
+	LD A,B
+	CP 0								;did we finish all 11d iterations?
+	JR Z, _skipMatch					;if yes, exit to _putMissile
+	PUSH BC								;save our count
+	LD B,0
+	LD C,9								;init BC to 9 bytes
+	ADD HL, BC							;advance 9 bytes
+	POP BC								;recall count
+	JR _checkCol						;loop
+
+_matchCol
+	LD B, 4
+
+
+	
+	
+	
+	
+_skipCols
+	INC HL								;advance to mcol pointer
+	LD A, (HL)							;mcol value
+	LD (col), A							;init col
+
+_skipMatch
+	POP AF								;pop unused roff target
