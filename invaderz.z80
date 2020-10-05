@@ -277,14 +277,91 @@ _updMissile:
 	SUB 4								;move missile -4px (upward on screen)
 	LD (HL), A							;commit the update to mrow
 	RET Z								;if we're at 0 - exit
+	LD (row), A							;init (row) for eventual _putMissile
+	
+;begin collision check
+	PUSH HL								;save mrow pointer
+	
+	;#1 get byte row of the missile
+	LD D, A								;A already holds updated mrow
+	LD E, 8
+	CALL div_d_e						;divide mcol / 8 to get byte row
 
-_putMissile
-	;arrive here with HL pointing to updated mrow
-	;LD A, (HL)							;A already has the updated value
-	LD (row), A
-	INC HL
+_checkRows
+	;every row is the same so just use roffs of first column
+	LD HL, invaders
+	LD B, 4
+	
+_checkRow
+	;#2 get byte row(s) of invader(s)
+	;loop over 4x rows until matched
+	PUSH DE								;save #1 quotient again
+	INC HL								;first element is sprite style
+	INC HL								;next is roff
+	LD A, (vrow)
+	LD D, (HL)
+	ADD A, D							;vrow + roff
+	LD D, A
+	LD E, 8
+	CALL div_d_e						;divide (vrow + roff) / 8 to get row
+	LD A, D								;stage quotient in accumulator
+	POP DE								;recall our quotient from #1
+	CP D								;compare quotients
+	JR Z, _checkCols
+	DEC B
+	LD A, 0
+	CP B
+	JR Z, _skipCols						;no match found
+	JR _checkRow
+	
+_checkCols
+	;#3 get byte column of the missile
+	POP HL								;restore mrow pointer
+	INC HL								;get mcol pointer
+	LD A, (HL)							;get mcol value
+	LD (col), A							;init (col) for eventual _putMissile
+	LD D, A
+	LD E, 8
+	CALL div_d_e						;divide mcol / 8 to get byte column
+
+	LD HL,invaders
+	LD B, $0B
+	
+_checkCol
+	;#4 find invader(s) in this column, if any
+	;loop over columns until matched
+	PUSH DE								;preserve our quotient from #3
+	PUSH BC								;preserve our rowcount (destroyed below by ADD HL,BC & div_d_e)
+	LD A, (vcol)
+	LD D, (HL)
+	ADD A, D							;vcol + coff
+	LD D, A
+	LD E, 8
+	CALL div_d_e						;divide (vcol + coff) / 8 to get byte column
+	LD A, D								;stage quotient in accumulator
+	POP DE								;recall #2 quotient
+	CP D								;compare quotients
+	JR Z, _collision
+	LD B,0
+	LD C,9
+	ADD HL,BC							;skip 9 bytes to next column
+	POP BC								;recall our rowcount
+	DEC B
+	LD A, 0
+	CP B
+	JR Z, _putMissile					;no match found
+	JR _checkCols
+
+_collision
+	;at this byte
+
+_skipCols
+	POP HL								;restore mrow pointer
+	INC HL								;get mcol pointer
 	LD A, (HL)
 	LD (col), A
+
+_putMissile
 	LD IX, missile
 	CALL putSprite
 	RET									;return to caller which was _eachMissile via _updMissile
@@ -589,6 +666,16 @@ missile:
 .DB %00000000
 .DB %00000000
 .DB %00000000
+
+explosion:
+.DB %00000000
+.DB %01001001
+.DB %00101010
+.DB %00000000
+.DB %01100011
+.DB %00000000
+.DB %00101010
+.DB %01001001
 
 ;why not write these as binary masks since that's what they're used for??? <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK
 myMask:
