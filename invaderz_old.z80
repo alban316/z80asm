@@ -79,8 +79,7 @@ explodedFlag EQU rawInput + 23
 	LD A, $38
 	LD (prow), A
 	
-	;LD A, $2C
-	LD A, $28
+	LD A, $2C
 	LD (pcol), A
 
 	;init invader (fleet) left column
@@ -167,15 +166,14 @@ playerLeft:
 	LD A, (pcol)
 	CP 0								;leftmost boundary = 0
 	JR Z, mainLoop						;do nothing & keep looping
-	;LD B, $FE							;-2d
-	LD B, $F8							;-8d
+	LD B, $FE							;-2d
 	JR playerMove
 	
 playerRight:
 	LD A, (pcol)
 	CP $58								;rightmost boundary = 88d
 	JR Z, mainLoop						;do nothing & keep looping
-	LD B, 8
+	LD B, 2
 	
 playerMove:
 	ADD A, B							;otherwise g'head and update player col pcol
@@ -243,6 +241,94 @@ render:
 
 	B_CALL(_GrBufCpy)					;finally display the screen buffer!
 
+;check if any explosions need to be flipped
+;also check game-over condition (we waited until here to display final explosion before ending)
+	LD A, (explodedFlag)
+	CP 0
+	RET Z								;flag is zero so just return to caller
+
+	;else flag IS not zero & we have some cleanup to do
+	;1. must reset explosion flag to 0
+	;2. must set all active explosions to blank
+	;3. must re-evaluate ileftmost & irightmost & vrightbound
+	LD HL, explodedFlag
+	LD (HL), 0							;reset exploded flag
+	LD HL, invaders + $2B				;work backward from +43d i.e. end of array 
+	LD B, $0B							;loop 11d times outer
+	LD D, 0								;ileftmost temp storage
+	LD E, 0								;irightmost temp storage
+
+_updLRouter
+	;must go through entire byte array by column
+	;outer loop x11, e.g. 43,42,41,40,39,38,37,36,35,34,33
+	;inner loop x4, e.g. 43,32,21,10...42,31,20,9...41,30,19,8...etc
+	;any non-zero value makes this the irightmost column
+	;as soon as irightmost is set, we don't update it again
+	;any non-zero also sets ileftmost, but we keep updating for the whole loop
+	PUSH HL								;preserve our initial position e.g. invaders + 43d
+	LD A, 4								;always loop 4 times inner
+
+__updLRinner
+	PUSH AF								;preserve rowcount
+
+__checkExplosion
+	;is there an explosion here 2 b cleared?
+	LD A, $28							;explosion byte pointer corresponds to sp_sheet
+	CP (HL)								;compare invaders byte
+	JR NZ, __checkEmpty					;not explosion so just check empty
+	LD (HL), 0							;set empty
+	
+__checkEmpty
+	;empty? if so it can't be leftmost or rightmost
+	LD A, 0
+	CP (HL)								;compare to zero
+	JR NZ, __updL						;non-zero so we will set leftmost & conditionally rightmost, too
+	JR __contLRrow						;it's evidently empty so no action
+
+__updL
+	LD D, B
+	
+__updR
+	CP E
+	JR NZ, __contLRrow					;if E is already nonzero we leave it alone
+	LD E, B								;set it 
+
+__contLRrow
+	POP AF								;recall our rowcount
+	DEC A								;decrement rowcount
+	PUSH BC								;preserve our outer column counter/marker
+	LD B, $FF							;remeber HL + BC is 16-bit math so set B accordingly
+	LD C, $F5							;-11d is next row
+	ADD HL, BC							;move to next row, same column
+	POP BC								;recall our outer column counter/marker
+	CP 0								;is A inner counter zero?
+	JR NZ, __updLRinner
+
+_contLRouter
+	POP HL								;recall outer place in invaders, e.g. invaders + 43
+	DEC HL								;drop down 1 byte, e.g. from n + 43 to n + 42
+	DJNZ _updLRouter
+	
+	;finished now we need to save these values
+	;D & E are both 1 too high since DJNZ runs from 11 to 1 instead of 10 to 0
+	LD A, D								;stage ileftmost
+	DEC A
+	LD (ileftmost), A					;commit recalc'd ileftmost
+	LD A, E								;stage irightmost
+	DEC A
+	LD (irightmost), A					;commit recalc'd irightmost
+	
+	;recompute vrightbound as (10 - irightmost) * 8 + 7
+	;A already holds irightmost
+	NEG									;make the quantity negative
+	ADD A, $0A							;A holds (10 - irightmost)
+	LD D,0								;prep to multiply quantity times 8 recall DE * A = HL 
+	LD E,8								;A already contains our quantity
+	CALL de_times_a
+	LD A,L								;retrieve 8-bit product from HL
+	ADD A, 7							;add 7px
+	LD (vrightbound), A
+	
 	RET									;finally return to caller
 
 putPlayer:
@@ -278,68 +364,145 @@ _updMissile:
 	LD (HL), A							;commit the update to mrow
 	RET Z								;if we're at 0 - exit
 
-_putMissile
+	;begin check collision...
+__checkByteRow
+	;to determine which invaders byterow we're in
+	;we do (mrow - vrow) / 8
+	PUSH HL								;preserve HL (mrow pointer)
+	PUSH HL								;preserve HL (mrow pointer) cuz we could need it 2x
+	LD HL, vrow							;point HL at vrow i.e. invader row
+	SUB (HL)							;subtract vrow from mrow
+	LD D, A								;stage dividend param (mrow - vrow) for div_d_e
+	LD A, 8
+	LD E, A								;stage divisor param (8) for div_d_e
+	CALL div_d_e						;after this, D will contain quotient i.e. byterow
+	LD A, D								;stage quotient in A for comparison
+	CP 3								;compare to 3 (4th row, zero based)
+	JR Z, __checkByteCol				;if row == 4 goto next task
+	JR C, __checkByteCol				;if A < 4 i.e. row < 4 goto next task
+	POP HL								;cleanup unneeded push (1 of 2) of mrow
+	POP HL								;recall mrow pointer (2 of 2)
+	JR __putMissile						;just display an updated missile
+
+__checkByteCol
+	;we need to do byterow * 11 to help find invaders element
+	;our multiplication subroutine does DE times A
+	LD E, D								;D still holds result from above, move it E
+	LD D, 0
+	LD A, $0B							;11d
+	CALL de_times_a						;after this, HL will contain product
+	LD A, L								;more accurately L holds our 8-bit product
+	LD (rowoff), A						;save row offset--can't think of another way to do this
+
+	;first check if mcol > vcol
+	LD A, (vcol)						;stage vcol in A
+	POP HL								;recall mrow pointer (1 of 2 pops) needed to get mcol
+	INC HL								;advance 1 byte to mcol pointer
+	CP (HL)								;compare A vcol to (HL) mcol
+	JR Z, __finalCollision				;if vcol == mcol goto next task
+	JR C, __finalCollision				;if A < (HL) i.e. vcol < mcol i.e. mcol > vcol goto next task
+	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
+	JR __putMissile						;just display an updated missile
+
+__finalCollision
+	;now to determine which bytecol we're in we'll do (mcol - vcol) / 8
+	;for better flow we'll actually do (-vcol + mcol) instead
+	NEG									;A still holds vcol and is now -vcol
+	ADD A,(HL)							;HL still points to mcol; add it to -vcol i.e. (mcol - vcol)
+	LD D, A								;stage result (mcol - vcol) as dividend param for div_d_e
+	LD A, 8
+	LD E, A								;stage divisor param (8) for div_d_e
+	CALL div_d_e						;after this, D will contain quotient i.e. bytecol aka column offset
+	LD A, (rowoff)						;remember our rowoffset computed earlier
+	ADD A, D							;add column offset
+	LD B, 0
+	LD C, A								;BC now contains our row offset in bytes
+	LD HL, invaders						;recall our invaders array pointer
+	ADD HL, BC							;add our total offset to HL
+	LD A, (HL)							;what's here?
+	CP $28								;is there an explosion here from previous loop? (unlikely condition)
+	JR Z, __skipExplosion				;skip it dont put another explosion but do process missile
+	CP 0								;is it empty?
+	JR NZ, __putExplosion				;not empty! replace byte w an explosion!
+	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
+	JR __putMissile						;just display an updated missile
+	;...end check collision
+
+__putExplosion
+	;arrive here with HL pointing to invaders array index
+	LD (HL), $28						;40d'th byte is explode frame of sp_sheet
+	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
+	LD (HL), 0							;set mrow to 0 so missile stops flying & silo available
+	LD HL, explodedFlag
+	LD (HL), 1							;set explodedFlag = 1 (True)
+	LD A, (enemyCount)
+	DEC A
+	LD (enemyCount), A
+	RET									;return to caller which was _eachMissile
+
+__skipExplosion
+	POP HL								;recall mrow pointer (2 of 2 pops - conditional)
+
+__putMissile
 	;arrive here with HL pointing to updated mrow
-	;LD A, (HL)							;A already has the updated value
+	LD A, (HL)
 	LD (row), A
 	INC HL
 	LD A, (HL)
 	LD (col), A
 	LD IX, missile
 	CALL putSprite
-	RET									;return to caller which was _eachMissile via _updMissile
+	RET									;return to caller which was _eachMissile
 
 putInvaders:
-	;point to invaders
-	;read the column offset (coff) & add it to vcol
-	;read the invader style
-	;read the row offset (roff) & add it to vrow
-	;repeat from invader style
-	;later we will dec coff by -8 everytime a leftmost column is obliterated
-	;vrightbound will be 7 + coff of last column that isn't empty
+	;(row),(vcol) must be initialized
+	;(row) will be destroyed--so keep a copy of it
+	;(col) will be destroyed--so keep a copy of it
 	
-	;(vcol, vrow) must be initialized
-	
-	LD B, $0B							;init 11d columns
-	LD HL, invaders
-	
-_putInvaderCol:
-	LD A, (vcol)
-	LD D, (HL)							;first element is coff
-	ADD A, D							;vcol + coff
-	LD D, A								;commit sum to D
-	PUSH BC								;preserve iteration (outer) count
-	LD B, 4
+	PUSH BC								;save our B counter for DJNZ, below
 
-_putInvader
-	INC HL								;next element is byte offset of sp_sheet
-	PUSH BC								;preserve iteration (inner) count
-	LD B, 0
-	LD C, (HL)							;stage BC with byte offset
-	LD IX, sp_sheet
-	ADD IX, BC							;IX now points to correct sprite frame
-	INC HL								;next element is roff
-	LD A, (vrow)
-	LD E, (HL)							;roff
-	ADD A,E								;vrow + roff
-	LD E, A								;commit sum to E
-	PUSH HL								;preserve our place in invaders
-	PUSH DE								;preserve our vcol + coff, don't care about E
-	LD HL, col
-	LD (HL), D							;init col for putSprite
-	LD HL, row
-	LD (HL), E							;init row for putsprite
-	CALL putSprite
-	POP DE								;recall our vcol + coff
-	POP HL								;recall our place in invaders
-	POP BC								;recall our iteration count (inner)
-	DJNZ _putInvader
+	;for 1st iteration HL = invaders
+	;subsequent iterations stepped through during invaderLine
+	LD A, (vcol)						;recall invader fleet vcol value
+	LD (col), A							;init col at vcol value
+	LD B, $0B							;Iterate invaderLine 11d times
+	CALL invaderLine
 	
+	LD A, (row)							;stage row in A
+	ADD A, 8							;increment by 8px
+	LD (row), A							;update row in memory
 	POP BC
-	INC HL								;next element is coff
-	DJNZ _putInvaderCol
+	DJNZ putInvaders
 	RET
+
+invaderLine:
+	;(row),(col) must be initialized
+	;HL must point to invaders array e.g. LD HL, invaders
+	;(col) will be destroyed--so keep a copy of it
 	
+	PUSH BC								;save our B counter for DJNZ
+	
+	;HL is already pointing at correct element of invaders
+	LD B, 0								;init BC upper byte to 0
+	LD A, (HL)							;element value is spritesheet offset in bytes
+	LD C, A								;init BC lower byte to staged value
+
+	LD IX, sp_sheet						;get spritesheet
+	ADD IX, BC							;value at index is sprite frame offset in bytes
+	PUSH HL								;save our place in invaders array
+	CALL putSprite
+
+	;check if we're done with this line
+	;either way, we still need to POP & INC to be ready for next col or next line
+	POP HL								;recall our place in invaders array
+	INC HL								;advance to next element
+	LD A, (col)							;recall col in px
+	ADD A, 8							;add 8px
+	LD (col), A							;update col
+	POP BC								;recall our B counter
+	DJNZ invaderLine
+	RET
+
 ;anim:
 	;(framect) must be initialized
 	;IX must be pre-loaded with sprite, e.g. LD IX, pacman
@@ -556,18 +719,10 @@ sp_sheet:
 .DB %01001001
 
 invaders:
-;  coff, styl, roff, styl, roff, styl, roff, style, roff
-.DB   0,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB   8,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $10,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $18,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $20,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $28,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $30,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $38,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $40,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $48,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
-.DB $50,  $10,    0,  $20,    8,  $10,  $10,   $20,  $18
+.DB $10, $10, $10, $10, $10, $10, $10, $10, $10, $10, $10
+.DB $20, $20, $20, $20, $20, $20, $20, $20, $20, $20, $20
+.DB $10, $10, $10, $10, $10, $10, $10, $10, $10, $10, $10
+.DB $20, $20, $20, $20, $20, $20, $20, $20, $20, $20, $20
 
 player:
 ;right facing
