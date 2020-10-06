@@ -1,0 +1,148 @@
+;begin collision check
+	;check row - is mrow even high enough to hit?
+	LD A, (vrow)
+	LD B, A								;stage vrow in B
+	LD A, (HL)							;retrieve mrow in A
+	SUB B								;subtract vrow from mrow
+	LD D, A								;load dividend to D
+	LD E, 8								;load divisor to E
+	CALL div_d_e						;quotient will be in D--this is bytecount for column
+	LD A, D								;stage quotient
+	CP 4								;compare to 4
+	JP Z, _checkCols					;equal 4 so g'head
+	JP NC, _skipCol						;greater than 4 it's not a hit yet
+
+_checkCols
+	PUSH HL								;save our mrow pointer
+	INC HL								;HL still points to mrow, advance to mcol
+	LD A, (vcol)
+	LD B, A								;stage vcol in B
+	LD A,(HL)							;retrieve mcol in A
+	LD (col), A							;init (col) for _putMissile
+	SUB B								;subtract vcol from mcol
+	JR C, _skipRow						;if it's negative just put missile
+	AND %11111000						;normalize to 0,8,16,24,32...
+	CP $50								;compare to 80d
+	JR NC, _skipRow						;if it's greater than 80d just putmissile
+	LD B, $0B							;iterate max of 11d times
+	LD HL, invaders
+
+_checkCol
+										;A contains coff target value
+	CP (HL)								;is this coff a match to target coff in A?
+	JR Z, __match						;if yes, process rows in this column
+	JR __cont							;no match, go next
+
+__match
+	PUSH BC								;save our count
+	PUSH HL								;save HL coff pointer
+	PUSH AF								;preserve our coff target value
+	LD B,0
+	LD C, D								;D still holds our quotient which is roff
+	ADD HL, BC							;now pointing at col + row
+	LD A, (HL)							;examine invaders contents
+	CP 0								;compare to 0 empty
+	JR Z, __skipExplosion				;if Z, nothing's here
+	CP $28								;compare to explosion
+	JR Z, __skipExplosion				;if Z, nothing's here but a leftover explosion
+	LD (HL), $28						;put an explosion here
+	LD HL, explodedFlag
+	LD (HL), 1							;set flag
+	
+__skipExplosion
+	POP AF								;recall coff target value
+	POP HL								;recall HL coff pointer
+	POP BC								;recall our counter
+
+__cont
+	PUSH BC								;save our count
+	LD B,0
+	LD C,5								;init BC to 5 bytes
+	ADD HL, BC							;advance 5 bytes
+	POP BC								;recall count
+	DJNZ _checkCol						;loop
+	
+
+	POP HL								;recall mrow
+	LD A, (explodedFlag)				;did we have an explosion?
+	CP 1
+	JR NZ, _putMissile					;No, we didn't
+										;Else yes we did so process
+	LD (HL), 0							;set mrow flag to 0 only if flag was set
+	LD A, 0
+	LD (explodedFlag), A				;turn off exploded flag
+
+	;TODO: decrement invader count,too
+	;re-evaluate bounds (coff, etc) after explosion
+	;although explosion itself is non-zero so it not immediately reflected
+
+updBound
+	;recompute coffs e.g. if outer column enemies are destroyed
+	LD HL, invaders
+	LD B, $0B
+	LD A, 0								;"moff" to be +=8 for every non-zero column
+	LD E, 0								;flag to mark first non-zero value found
+
+_ubOuter
+	LD (HL), A							;col0 is always 0; coln is cumulative "moff"
+	PUSH BC								;save count (outer)
+	PUSH AF								;save moff
+	LD B, $04							;inner loop x4
+	LD D, 0								;init zero column sum
+
+_ubInner
+	INC HL								;now pointing at (next) spoff
+	LD A, (HL)							;load spoff value into A
+	ADD A, D							;A now holds column sum
+	LD D, A								;hold column sum in D
+	DJNZ _ubInner
+
+_ubCheckD
+	;exit inner loop with column sum in D
+	;if D==0 & E==0 then don't += 8
+	;if D==0 & E==1 then += 8
+	;if D != 0, then E = 1 & += 8
+	LD A, D
+	CP 0								;column sum == 0?
+	JR Z, _ubCheckE						;yes column sum is zero
+	LD E, 1								;no, it is non-zero so set non-zero flag
+	POP AF
+	ADD A, 8							;also moff +=8
+	JR _ubCont
+
+_ubCheckE
+	;if E == 0 don't += 8, else += 8
+	LD A, E
+	CP 0								;flag == 0?
+	JR Z, _ubContFromE					;yes it's zero so do NOT +=8 just continue
+	POP AF
+	ADD A, 8							;+=8
+	JR _ubCont
+
+_ubContFromE
+	POP AF
+
+_ubCont
+	POP BC
+	INC HL
+	DJNZ _ubOuter
+
+	;JR mainLoop
+
+	;yikes this is just the beginning!
+	;still need a second partial pass from the right to zero any coffs for zero-sum columns! frick!
+	;XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+
+
+
+	JR _putMissile
+
+_skipCol
+	INC HL								;HL still pointed at mrow
+	LD A, (HL)
+	LD (col), A
+	JR _putMissile
+
+_skipRow
+	POP HL								;recall mrow & continue
