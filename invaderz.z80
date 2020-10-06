@@ -1,10 +1,13 @@
 ;Space Invaders clone for TI-83
 ;Backlog:
+; BUG: Good news is coff recomputation is working. Bad news is if it happens in the middle of screen, everybody jumps back left
+
+
 ; BUG: sometimes I blast the sh*t out of a column & it disappears--even tho I haven't yet cleanup up explosions in my code
 ;......and it seems to cause other columns to glitch somehow. Not sure how it's possible!
 ; BUG: Can't shoot far right column. I think it's line 306 where I compare to 80d
 
-; 2DO: Recompute coff periodically when an entire left column is 0
+
 ; 2DO: Recompute vrightbound based on max coff
 ; 2DO: account for missile byte shift. maybe use mcol + 5 due to sprite design?
 ; MAYB: Move player in 8px increments instead of smoothly? Enemy will always move smoothly tho!!
@@ -15,6 +18,9 @@
 ; 2DO: Count invaders killed
 
 ;Finished:
+; 2DO: Recompute coff periodically when an entire left column is 0
+
+
 ; 2DO: Cleanup explosions periodically
 ; 2DO: Set a flag when an exploded enemy has occurred
 ; ...after the next run of putSprite, clear any explodes & replace with zero
@@ -67,7 +73,7 @@ ileftmost EQU rawInput + 18
 irightmost EQU rawInput + 19
 vrightbound EQU rawInput + 20
 enemyCount EQU rawInput + 21
-rowoff EQU rawInput + 22
+tock EQU rawInput + 22
 explodedFlag EQU rawInput + 23
 
 
@@ -144,6 +150,10 @@ mainLoop:
 	AND %00000111						;equivalent of A mod 8
 	CP 0
 	JR Z, getInput						;if 0, let's check for input
+	;LD A, (tock)
+	;AND %00000011						;equivalent of A mod 4
+	;CP 0
+	;JR Z, updBound						;if 0, re-evaluate ileftmost, irightmost, vrightbound
 	JR mainLoop							;repeat
 
 getInput:
@@ -180,7 +190,7 @@ playerLeft:
 playerRight:
 	LD A, (pcol)
 	CP $58								;rightmost boundary = 88d
-	JR Z, mainLoop						;do nothing & keep looping
+	JP Z, mainLoop						;do nothing & keep looping
 	LD B, 4
 	
 playerMove:
@@ -215,6 +225,9 @@ _setMissile:
 	JR mainLoop
 
 update:
+	LD HL, tock
+	INC (HL)							;every time we hit update we will tock
+
 	;move invaders right/left
 	LD A, (vrightbound)					;stage vrightbound in A
 	LD B, A								;standby vrightbound in B for compare in a moment
@@ -321,8 +334,8 @@ _updMissile:
 	CALL div_d_e						;quotient will be in D--this is bytecount for column
 	LD A, D								;stage quotient
 	CP 4								;compare to 4
-	JR Z, _checkCols					;equal 4 so g'head
-	JR NC, _skipCol						;greater than 4 it's not a hit yet
+	JP Z, _checkCols					;equal 4 so g'head
+	JP NC, _skipCol						;greater than 4 it's not a hit yet
 
 _checkCols
 	PUSH HL								;save our mrow pointer
@@ -374,17 +387,79 @@ __cont
 	POP BC								;recall count
 	DJNZ _checkCol						;loop
 	
+
 	POP HL								;recall mrow
-	LD A, (explodedFlag)
+	LD A, (explodedFlag)				;did we have an explosion?
 	CP 1
-	JR NZ, _putMissile					;Flag is not set
-										;if flag is set Z just keep going
+	JR NZ, _putMissile					;No, we didn't
+										;Else yes we did so process
 	LD (HL), 0							;set mrow flag to 0 only if flag was set
 	LD A, 0
 	LD (explodedFlag), A				;turn off exploded flag
 
-	;;;;;decrement invader count,too
-	;;;;;elsewhere we will do a TTL for explosions & also reset the leftmost & rightmost via updates to coff's
+	;TODO: decrement invader count,too
+	;re-evaluate bounds (coff, etc) after explosion
+	;although explosion itself is non-zero so it not immediately reflected
+
+updBound
+	;recompute coffs e.g. if outer column enemies are destroyed
+	LD HL, invaders
+	LD B, $0B
+	LD A, 0								;"moff" to be +=8 for every non-zero column
+	LD E, 0								;flag to mark first non-zero value found
+
+_ubOuter
+	LD (HL), A							;col0 is always 0; coln is cumulative "moff"
+	PUSH BC								;save count (outer)
+	PUSH AF								;save moff
+	LD B, $04							;inner loop x4
+	LD D, 0								;init zero column sum
+
+_ubInner
+	INC HL								;now pointing at (next) spoff
+	LD A, (HL)							;load spoff value into A
+	ADD A, D							;A now holds column sum
+	LD D, A								;hold column sum in D
+	DJNZ _ubInner
+
+_ubCheckD
+	;exit inner loop with column sum in D
+	;if D==0 & E==0 then don't += 8
+	;if D==0 & E==1 then += 8
+	;if D != 0, then E = 1 & += 8
+	LD A, D
+	CP 0								;column sum == 0?
+	JR Z, _ubCheckE						;yes column sum is zero
+	LD E, 1								;no, it is non-zero so set non-zero flag
+	POP AF
+	ADD A, 8							;also moff +=8
+	JR _ubCont
+
+_ubCheckE
+	;if E == 0 don't += 8, else += 8
+	LD A, E
+	CP 0								;flag == 0?
+	JR Z, _ubContFromE					;yes it's zero so do NOT +=8 just continue
+	POP AF
+	ADD A, 8							;+=8
+	JR _ubCont
+
+_ubContFromE
+	POP AF
+
+_ubCont
+	POP BC
+	INC HL
+	DJNZ _ubOuter
+
+	;JR mainLoop
+
+	;yikes this is just the beginning!
+	;still need a second partial pass from the right to zero any coffs for zero-sum columns! frick!
+	;XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+
+
 
 	JR _putMissile
 
