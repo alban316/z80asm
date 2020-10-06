@@ -1,5 +1,11 @@
 ;Space Invaders clone for TI-83
 ;Backlog:
+; BUG: sometimes I blast the sh*t out of a column & it disappears--even tho I haven't yet cleanup up explosions in my code
+;......and it seems to cause other columns to glitch somehow. Not sure how it's possible!
+; BUG: Can't shoot far right column. I think it's line 306 where I compare to 80d
+
+; 2DO: Recompute coff periodically when an entire left column is 0
+; 2DO: Recompute vrightbound based on max coff
 ; 2DO: account for missile byte shift. maybe use mcol + 5 due to sprite design?
 ; MAYB: Move player in 8px increments instead of smoothly? Enemy will always move smoothly tho!!
 ; 2DO: Add animation of sprites, e.g. eyes legs
@@ -9,6 +15,7 @@
 ; 2DO: Count invaders killed
 
 ;Finished:
+; 2DO: Cleanup explosions periodically
 ; 2DO: Set a flag when an exploded enemy has occurred
 ; ...after the next run of putSprite, clear any explodes & replace with zero
 ; 2DO: Add range of motion (i.e. upd leftmost & rightmost) when an enemy is destroyed
@@ -242,7 +249,32 @@ render:
 
 	B_CALL(_GrBufCpy)					;finally display the screen buffer!
 
+	CALL clearExploded
+
 	RET									;finally return to caller
+
+clearExploded
+	LD HL, invaders
+	LD B, $0B							;outer loop x11d times
+
+_ceOuter
+	INC HL								;get to first spoff from coff
+	PUSH BC
+	LD B, 4								;inner loop x4 times
+	
+_ceInner
+	LD A, (HL)
+	CP $28								;compare to explosion
+	JR NZ, _ceSkip						;not an explosion? do nothing
+	LD (HL), 0							;flip to blank
+
+_ceSkip
+	INC HL								;next spoff
+	DJNZ _ceInner
+
+	POP BC
+	DJNZ _ceOuter
+	RET
 
 putPlayer:
 	LD IX, player						;loads right-facing version
