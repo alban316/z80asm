@@ -1,13 +1,8 @@
 ;Space Invaders clone for TI-83
 ;Backlog:
-; BUG: sometimes I blast the sh*t out of a column & it disappears--even tho I haven't yet cleanup up explosions in my code
+; BUG: sometimes I blast the sh*t out of a column & it disappears--even tho I haven't yet cleanup up explosions in my code! how?!?!
 ;......and it seems to cause other columns to glitch somehow. Not sure how it's possible!
-; BUG: Can't shoot far right column. I think it's line 306 where I compare to 80d
-
-; 2DO: Recompute coff periodically when an entire left column is 0
-; 2DO: Recompute vrightbound based on max coff
 ; 2DO: account for missile byte shift. maybe use mcol + 5 due to sprite design?
-; MAYB: Move player in 8px increments instead of smoothly? Enemy will always move smoothly tho!!
 ; 2DO: Add animation of sprites, e.g. eyes legs
 ; 2DO: Allow drop bomb incl adjust brow (on a timer)
 ; 2DO: Sprite collision (player vs invader, player vs bomb)
@@ -15,6 +10,17 @@
 ; 2DO: Count invaders killed
 
 ;Finished:
+; BUG: Can't shoot far right column. I think it's line 306 where I compare to 80d
+; item below doesn't work like this anymore--total refactor
+; BUG: Good news is coff recomputation is working. Bad news is if it happens in the middle of screen, everybody jumps back left
+;......SO when this happens we should compensate by increasing vcol position
+;......OR we should do it only at the far left
+;......ALSO I hate that explosions cause non-zero column computation. meaning that empty column isn't reflected until next kill.
+;......another argument to doing this computation at the margins, not after a kill
+; 2DO: Recompute vrightbound based on max coff --refactored & doesn't work like this anymore
+; MAYB: Move player in 8px increments instead of smoothly? Enemy will always move smoothly tho!!
+;.......tried this and didn't like it.
+; 2DO: Recompute coff periodically when an entire left column is 0
 ; 2DO: Cleanup explosions periodically
 ; 2DO: Set a flag when an exploded enemy has occurred
 ; ...after the next run of putSprite, clear any explodes & replace with zero
@@ -56,7 +62,7 @@ ltpart EQU rawInput + 3
 rtpart EQU rawInput + 4
 spriteShift EQU rawInput + 5
 framect EQU rawInput + 6
-vcol EQU rawInput + 7
+__vcol EQU rawInput + 7
 vrow EQU rawInput + 8
 vmod EQU rawInput + 9
 pcol EQU rawInput + 10
@@ -67,8 +73,8 @@ ileftmost EQU rawInput + 18
 irightmost EQU rawInput + 19
 vrightbound EQU rawInput + 20
 enemyCount EQU rawInput + 21
-rowoff EQU rawInput + 22
-explodedFlag EQU rawInput + 23
+tock EQU rawInput + 22
+killFlag EQU rawInput + 23
 
 
 .ORG ProgStart - 2
@@ -90,18 +96,14 @@ explodedFlag EQU rawInput + 23
 	LD A, $28
 	LD (pcol), A
 
-	;init invader (fleet) left column
-	LD A, 3
-	LD (vcol), A
-	
 	;init invader (fleet) moving right
 	LD A, 1
 	LD (vmod), A
 	
-	;init invader (fleet) top row
+	;init invader (vrow)
 	LD A, 0
 	LD (vrow), A
-
+	
 	;init missile rows & cols at 0
 	;mrow is a pointer to mrow,mcol,mrow0,mcol0,mrow1,mcol1
 	LD B, 6
@@ -126,8 +128,8 @@ initMrow:
 	LD HL, enemyCount
 	LD (HL), $2C						;44d enemies to start
 
-	;init explodedFlag
-	LD HL, explodedFlag
+	;init killFlag
+	LD HL, killFlag
 	LD (HL), 0
 
 	;init "timer"
@@ -180,7 +182,7 @@ playerLeft:
 playerRight:
 	LD A, (pcol)
 	CP $58								;rightmost boundary = 88d
-	JR Z, mainLoop						;do nothing & keep looping
+	JP Z, mainLoop						;do nothing & keep looping
 	LD B, 4
 	
 playerMove:
@@ -215,26 +217,88 @@ _setMissile:
 	JR mainLoop
 
 update:
-	;move invaders right/left
-	LD A, (vrightbound)					;stage vrightbound in A
-	LD B, A								;standby vrightbound in B for compare in a moment
-	LD A, (vcol)
-	CP 0								;leftmost boundary is always Zero 0px
-	JR Z, _toggleDir
-	CP B								;vrightbound is 88 - ((rightmost - leftmost) * 8)
-	JR NZ, _justUpdate
+	LD A, (vmod)
+	CP 1								;vmod == 1?
+	JR Z, _updRight						;yes, so update right
+										;else update left
 
-_toggleDir:
+_updLeft
+	LD B, $0B							;loop a max of 11d times
+	LD HL, invaders
+
+__linner
+	;find first non-FF index
+	LD A, (HL)							;examine vcoff
+	CP $FF								;is it FF?
+	JR NZ, __lfound						;not FF, thus found leftmost column
+	PUSH BC								;preserve iteration count
+	LD B, 0
+	LD C, 5
+	ADD HL, BC							;skip to next vcoff +5 bytes
+	POP BC								;recall iteration count
+	DEC B								;decrement count
+	LD A, B								;stage count for comparision
+	CP 0								;done iterating?
+	JR NZ, __linner						;repeat
+	
+	JR _justUpdate
+
+__lfound
+	CP 0								;position is 0?
+	JR Z, _toggleDir					;yes - toggle the other direction
+	JR _justUpdate						;no - just update in same direction
+
+_updRight
+	LD B, $0B
+	LD HL, invaders + $32				;search from the right, backwards from +50d
+	
+__rinner
+	;find first non-FF index
+	LD A, (HL)
+	CP $FF
+	JR NZ, __rfound
+	PUSH BC
+	LD B, $FF
+	LD C, $FB							;load BC with -5
+	ADD HL, BC
+	POP BC								;recall count
+	DEC B
+	LD A, B
+	CP 0
+	JR NZ, __rinner
+	
+	JR _justUpdate
+	
+__rfound
+	CP $58								;position is 88d?
+	JR Z, _toggleDir
+	JR _justUpdate
+
+_toggleDir
 	LD A, (vmod)
 	NEG
 	LD (vmod), A
 
-_justUpdate:
+_justUpdate
+	LD B, $0B
 	LD A, (vmod)
-	LD B, A
-	LD A, (vcol)
-	ADD A, B
-	LD (vcol), A
+	LD D, A								;stage vmod to D
+	LD HL, invaders
+	
+__jinner
+	LD A, (HL)
+	CP $FF								;FF is a flag for obliterated columns
+	JR Z, __updCont						;skip FF
+	ADD A, D							;vcoff + vmod
+	LD (HL), A							;apply update
+
+__updCont
+	PUSH BC
+	LD B,0
+	LD C,5
+	ADD HL, BC
+	POP BC
+	DJNZ __jinner
 
 render:
 	CALL clearGrBuffer
@@ -243,7 +307,7 @@ render:
 
 	LD HL, invaders						;HL must point to invaders before "putInvaders"
 	LD A, (vrow)
-	LD (row), A							;row must be init'd to vrow before "putInvaders"
+	;LD (row), A							;row must be init'd to vrow before "putInvaders"
 	LD B, 4								;putInvaders will loop x4 lines of enemies
 	CALL putInvaders
 
@@ -308,8 +372,8 @@ _updMissile:
 	SUB 4								;move missile -4px (upward on screen)
 	LD (HL), A							;commit the update to mrow
 	RET Z								;if we're at 0 - exit
-	LD (row), A							;init (row) for _putMissile <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< init (row)
-
+	LD (row), A							;init (row) for _putMissile <<<<<
+	
 ;begin collision check
 	;check row - is mrow even high enough to hit?
 	LD A, (vrow)
@@ -318,73 +382,90 @@ _updMissile:
 	SUB B								;subtract vrow from mrow
 	LD D, A								;load dividend to D
 	LD E, 8								;load divisor to E
-	CALL div_d_e						;quotient will be in D--this is bytecount for column
+	CALL div_d_e						;quotient will be in D--this is row offset in invaders array
 	LD A, D								;stage quotient
 	CP 4								;compare to 4
-	JR Z, _checkCols					;equal 4 so g'head
-	JR NC, _skipCol						;greater than 4 it's not a hit yet
+	JP Z, _checkCols					;equal 4 so g'head
+	JP C, _checkCols					;less than 4 that's ok too
+	JP NC, _skipCol						;greater than 4 it's not a hit yet
 
 _checkCols
 	PUSH HL								;save our mrow pointer
 	INC HL								;HL still points to mrow, advance to mcol
-	LD A, (vcol)
-	LD B, A								;stage vcol in B
 	LD A,(HL)							;retrieve mcol in A
-	LD (col), A							;init (col) for _putMissile
-	SUB B								;subtract vcol from mcol
-	JR C, _skipRow						;if it's negative just put missile
-	AND %11111000						;normalize to 0,8,16,24,32...
-	CP $50								;compare to 80d
-	JR NC, _skipRow						;if it's greater than 80d just putmissile
+	LD (col), A							;init (col) for _putMissile <<<<<
+	AND %11111000						;normalize to factor of 8
+	LD E, A								;save vcoff target in E from A
 	LD B, $0B							;iterate max of 11d times
 	LD HL, invaders
 
 _checkCol
-										;A contains coff target value
-	CP (HL)								;is this coff a match to target coff in A?
-	JR Z, __match						;if yes, process rows in this column
-	JR __cont							;no match, go next
-
-__match
 	PUSH BC								;save our count
-	PUSH HL								;save HL coff pointer
-	PUSH AF								;preserve our coff target value
-	LD B,0
-	LD C, D								;D still holds our quotient which is roff
-	ADD HL, BC							;now pointing at col + row
-	LD A, (HL)							;examine invaders contents
-	CP 0								;compare to 0 empty
-	JR Z, __skipExplosion				;if Z, nothing's here
-	CP $28								;compare to explosion
-	JR Z, __skipExplosion				;if Z, nothing's here but a leftover explosion
-	LD (HL), $28						;put an explosion here
-	LD HL, explodedFlag
-	LD (HL), 1							;set flag
-	
-__skipExplosion
-	POP AF								;recall coff target value
-	POP HL								;recall HL coff pointer
-	POP BC								;recall our counter
+	LD A, (HL)							;vcoff instance
+	AND %11111000						;normalize to factor of 8
+	CP E								;vcoff instance matches vcoff target?
+	JR Z, _match						;if yes, process target row in this column
+	JR _cont							;no match, go next
 
-__cont
-	PUSH BC								;save our count
-	LD B,0
-	LD C,5								;init BC to 5 bytes
-	ADD HL, BC							;advance 5 bytes
-	POP BC								;recall count
-	DJNZ _checkCol						;loop
+_match
+	PUSH DE								;save our vcoff & roff target
+	PUSH HL								;save HL vcoff pointer
+	LD E, 0								;we will use E to track sum of this column
+	LD B, 4								;iterate x4 times inner loop
+	LD A, 0								;count up to D rows (from begin collision check)
 	
+__minner
+	PUSH AF
+	INC HL								;go to first or next spoff
+	CP D								;is this our row? D saved earlier
+	JR NZ, __mskiprow					;No, this is not our row
+	
+	;yes, this row
+	LD A, (HL)							;Yes, this row (stage rowscore)
+	CP 0								;Is it already dead?
+	JR Z, __mnextrow					;Yes, already dead
+	
+	;no, not dead kill it
+	LD (HL), 0							;kill this enemy
+	LD A, 1
+	LD (killFlag), A					;set kill flag
+	;putSprite explosion using vcoff (col), and vrow + (roff * 8) as (row)
+
+__mskiprow
+	LD A, (HL)							;stage rowscore for skipped; re-stage for killed
+
+__mnextrow
+	ADD A, E							;compute running total
+	LD E, A								;commit total
+	POP AF
+	INC A								;+= 1 rowcount
+	DJNZ __minner
+	
+	;resume outer loop, post-match
+	POP HL								;recall vcoff pointer
+	LD A, E								;stage cumulative sum
+	CP 0
+	JP NZ, __mpostmatch					;non-zero sum means still enemies here
+	LD (HL), $FF						;zero sum means this column destroyed; set flag
+
+__mpostmatch
+	POP DE								;recall our outer vcoff target	
+
+_cont
+	LD B,0
+	LD C,5
+	ADD HL, BC							;advance 5 bytes to next vcoff
+	POP BC								;recall our outer count
+	DJNZ _checkCol						;outer loop!!
+	
+	;resume _checkCols, all loops completed
 	POP HL								;recall mrow
-	LD A, (explodedFlag)
+	LD A, (killFlag)					;did we have an explosion?
 	CP 1
-	JR NZ, _putMissile					;Flag is not set
-										;if flag is set Z just keep going
-	LD (HL), 0							;set mrow flag to 0 only if flag was set
+	JR NZ, _putMissile					;No, we didn't
+	LD (HL), 0							;Else yes set mrow flag to 0
 	LD A, 0
-	LD (explodedFlag), A				;turn off exploded flag
-
-	;;;;;decrement invader count,too
-	;;;;;elsewhere we will do a TTL for explosions & also reset the leftmost & rightmost via updates to coff's
+	LD (killFlag), A					;turn off kill flag
 
 	JR _putMissile
 
@@ -394,9 +475,6 @@ _skipCol
 	LD (col), A
 	JR _putMissile
 
-_skipRow
-	POP HL								;recall mrow & continue
-
 _putMissile
 	;arrive here with col & row init'd for putSprite
 	LD IX, missile
@@ -405,26 +483,23 @@ _putMissile
 
 putInvaders:
 	;point to invaders
-	;read the column offset (coff) & add it to vcol
+	;read the column offset (vcoff)
 	;read the invader style
-	;read the row offset (roff) & add it to vrow
-	;repeat from invader style
-	;later we will dec coff by -8 everytime a leftmost column is obliterated
-	;vrightbound will be 7 + coff of last column that isn't empty
-	
-	;(vcol, vrow) must be initialized
+	;add 8px row offset (vroff)
+	;repeat for each row
+	;repeat for each column
 	
 	LD B, $0B							;init 11d columns
 	LD HL, invaders
 	
 _putInvaderCol:
-	LD A, (vcol)
-	LD D, (HL)							;first element is coff
-	ADD A, D							;vcol + coff
-	LD D, A								;commit sum to D
 	PUSH BC								;preserve iteration (outer) count
+	LD A, (HL)							;get vcoff for this column
+	CP $FF								;$FF is flag for empty column
+	JP Z, _skipInvader					;is it FF? don't process it
+	LD D, A								;else we use D to hold vcoff
 	LD A, (vrow)
-	LD E, A								;initial vrow|roff
+	LD E, A								;initial vrow will become vroff
 	LD B, 4
 
 _putInvader
@@ -435,22 +510,29 @@ _putInvader
 	LD IX, sp_sheet
 	ADD IX, BC							;IX now points to correct sprite frame
 	PUSH HL								;preserve our place in invaders
-	PUSH DE								;preserve our vcol + coff, vrow + cumulative roff
+	PUSH DE								;preserve our vcoff & vroff
 	LD HL, col
 	LD (HL), D							;init col for putSprite
 	LD HL, row
 	LD (HL), E							;init row for putsprite
 	CALL putSprite
-	POP DE								;recall our vcol + coff
+	POP DE								;recall our vcoff, vroff
 	POP HL								;recall our place in invaders
 	POP BC								;recall our iteration count (inner)
-	LD A, E								;recall roff
+	LD A, E								;recall vroff
 	ADD A, 8							;add 8
 	LD E, A								;commit sum to E
 	DJNZ _putInvader
-
-	POP BC
 	INC HL								;next element is coff
+	JR _contInvader
+
+_skipInvader
+	LD B, 0
+	LD C, 5								;next vcoff is +5 bytes
+	ADD HL, BC							;pointer to next vcoff
+
+_contInvader
+	POP BC								;recall our iteration count (outer)
 	DJNZ _putInvaderCol
 	RET
 
