@@ -1,14 +1,7 @@
 ;Space Invaders clone for TI-83
 ;Backlog:
-; BUG: Good news is coff recomputation is working. Bad news is if it happens in the middle of screen, everybody jumps back left
-;......SO when this happens we should compensate by increasing vcol position
-;......OR we should do it only at the far left
-;......ALSO I hate that explosions cause non-zero column computation. meaning that empty column isn't reflected until next kill.
-;......another argument to doing this computation at the margins, not after a kill
 ; BUG: sometimes I blast the sh*t out of a column & it disappears--even tho I haven't yet cleanup up explosions in my code! how?!?!
 ;......and it seems to cause other columns to glitch somehow. Not sure how it's possible!
-; BUG: Can't shoot far right column. I think it's line 306 where I compare to 80d
-; 2DO: Recompute vrightbound based on max coff
 ; 2DO: account for missile byte shift. maybe use mcol + 5 due to sprite design?
 ; 2DO: Add animation of sprites, e.g. eyes legs
 ; 2DO: Allow drop bomb incl adjust brow (on a timer)
@@ -17,6 +10,14 @@
 ; 2DO: Count invaders killed
 
 ;Finished:
+; BUG: Can't shoot far right column. I think it's line 306 where I compare to 80d
+; item below doesn't work like this anymore--total refactor
+; BUG: Good news is coff recomputation is working. Bad news is if it happens in the middle of screen, everybody jumps back left
+;......SO when this happens we should compensate by increasing vcol position
+;......OR we should do it only at the far left
+;......ALSO I hate that explosions cause non-zero column computation. meaning that empty column isn't reflected until next kill.
+;......another argument to doing this computation at the margins, not after a kill
+; 2DO: Recompute vrightbound based on max coff --refactored & doesn't work like this anymore
 ; MAYB: Move player in 8px increments instead of smoothly? Enemy will always move smoothly tho!!
 ;.......tried this and didn't like it.
 ; 2DO: Recompute coff periodically when an entire left column is 0
@@ -73,7 +74,7 @@ irightmost EQU rawInput + 19
 vrightbound EQU rawInput + 20
 enemyCount EQU rawInput + 21
 tock EQU rawInput + 22
-explodedFlag EQU rawInput + 23
+killFlag EQU rawInput + 23
 
 
 .ORG ProgStart - 2
@@ -127,8 +128,8 @@ initMrow:
 	LD HL, enemyCount
 	LD (HL), $2C						;44d enemies to start
 
-	;init explodedFlag
-	LD HL, explodedFlag
+	;init killFlag
+	LD HL, killFlag
 	LD (HL), 0
 
 	;init "timer"
@@ -312,7 +313,7 @@ render:
 
 	B_CALL(_GrBufCpy)					;finally display the screen buffer!
 
-	;CALL clearExploded
+	CALL clearExploded
 
 	RET									;finally return to caller
 
@@ -371,16 +372,108 @@ _updMissile:
 	SUB 4								;move missile -4px (upward on screen)
 	LD (HL), A							;commit the update to mrow
 	RET Z								;if we're at 0 - exit
-	LD (row), A							;init (row) for _putMissile <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< init (row)
+	LD (row), A							;init (row) for _putMissile <<<<<
 	
+;begin collision check
+	;check row - is mrow even high enough to hit?
+	LD A, (vrow)
+	LD B, A								;stage vrow in B
+	LD A, (HL)							;retrieve mrow in A
+	SUB B								;subtract vrow from mrow
+	LD D, A								;load dividend to D
+	LD E, 8								;load divisor to E
+	CALL div_d_e						;quotient will be in D--this is row offset in invaders array
+	LD A, D								;stage quotient
+	CP 4								;compare to 4
+	JP Z, _checkCols					;equal 4 so g'head
+	JP C, _checkCols					;less than 4 that's ok too
+	JP NC, _skipCol						;greater than 4 it's not a hit yet
 
-;;;;;collision detection was here
-;;;;;collision detection was here
-;;;;;temp code here
-	INC HL
+_checkCols
+	PUSH HL								;save our mrow pointer
+	INC HL								;HL still points to mrow, advance to mcol
+	LD A,(HL)							;retrieve mcol in A
+	LD (col), A							;init (col) for _putMissile <<<<<
+	AND %11111000						;normalize to factor of 8
+	LD E, A								;save vcoff target in E from A
+	LD B, $0B							;iterate max of 11d times
+	LD HL, invaders
+
+_checkCol
+	PUSH BC								;save our count
+	LD A, (HL)							;vcoff instance
+	AND %11111000						;normalize to factor of 8
+	CP E								;vcoff instance matches vcoff target?
+	JR Z, _match						;if yes, process target row in this column
+	JR _cont							;no match, go next
+
+_match
+	PUSH DE								;save our vcoff & roff target
+	PUSH HL								;save HL vcoff pointer
+	LD E, 0								;we will use E to track sum of this column
+	LD B, 4								;iterate x4 times inner loop
+	LD A, 0								;count up to D rows (from begin collision check)
+	
+__minner
+	PUSH AF
+	INC HL								;go to first or next spoff
+	CP D								;is this our row? D saved earlier
+	JR NZ, __mskiprow					;No, this is not our row
+	
+	;yes, this row
+	LD A, (HL)							;Yes, this row (stage rowscore)
+	CP 0								;Is it already dead?
+	JR Z, __mnextrow					;Yes, already dead
+	
+	;no, not dead kill it
+	LD (HL), 0							;kill this enemy
+	LD A, 1
+	LD (killFlag), A					;set kill flag
+	;putSprite explosion using vcoff (col), and vrow + (roff * 8) as (row)
+
+__mskiprow
+	LD A, (HL)							;stage rowscore for skipped; re-stage for killed
+
+__mnextrow
+	ADD A, E							;compute running total
+	LD E, A								;commit total
+	POP AF
+	INC A								;+= 1 rowcount
+	DJNZ __minner
+	
+	;resume outer loop, post-match
+	POP HL								;recall vcoff pointer
+	LD A, E								;stage cumulative sum
+	CP 0
+	JP NZ, __mpostmatch					;non-zero sum means still enemies here
+	LD (HL), $FF						;zero sum means this column destroyed; set flag
+
+__mpostmatch
+	POP DE								;recall our outer vcoff target	
+
+_cont
+	LD B,0
+	LD C,5
+	ADD HL, BC							;advance 5 bytes to next vcoff
+	POP BC								;recall our outer count
+	DJNZ _checkCol						;outer loop!!
+	
+	;resume _checkCols, all loops completed
+	POP HL								;recall mrow
+	LD A, (killFlag)					;did we have an explosion?
+	CP 1
+	JR NZ, _putMissile					;No, we didn't
+	LD (HL), 0							;Else yes set mrow flag to 0
+	LD A, 0
+	LD (killFlag), A					;turn off kill flag
+
+	JR _putMissile
+
+_skipCol
+	INC HL								;HL still pointed at mrow
 	LD A, (HL)
 	LD (col), A
-
+	JR _putMissile
 
 _putMissile
 	;arrive here with col & row init'd for putSprite
