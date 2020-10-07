@@ -307,38 +307,12 @@ render:
 
 	LD HL, invaders						;HL must point to invaders before "putInvaders"
 	LD A, (vrow)
-	;LD (row), A							;row must be init'd to vrow before "putInvaders"
 	LD B, 4								;putInvaders will loop x4 lines of enemies
 	CALL putInvaders
 
 	B_CALL(_GrBufCpy)					;finally display the screen buffer!
 
-	CALL clearExploded
-
 	RET									;finally return to caller
-
-clearExploded
-	LD HL, invaders
-	LD B, $0B							;outer loop x11d times
-
-_ceOuter
-	INC HL								;get to first spoff from coff
-	PUSH BC
-	LD B, 4								;inner loop x4 times
-	
-_ceInner
-	LD A, (HL)
-	CP $28								;compare to explosion
-	JR NZ, _ceSkip						;not an explosion? do nothing
-	LD (HL), 0							;flip to blank
-
-_ceSkip
-	INC HL								;next spoff
-	DJNZ _ceInner
-
-	POP BC
-	DJNZ _ceOuter
-	RET
 
 putPlayer:
 	LD IX, player						;loads right-facing version
@@ -372,7 +346,7 @@ _updMissile:
 	SUB 4								;move missile -4px (upward on screen)
 	LD (HL), A							;commit the update to mrow
 	RET Z								;if we're at 0 - exit
-	LD (row), A							;init (row) for _putMissile <<<<<
+	;LD (row), A							;init (row) for _putMissile <<<<<
 	
 ;begin collision check
 	;check row - is mrow even high enough to hit?
@@ -387,13 +361,13 @@ _updMissile:
 	CP 4								;compare to 4
 	JP Z, _checkCols					;equal 4 so g'head
 	JP C, _checkCols					;less than 4 that's ok too
-	JP NC, _skipCol						;greater than 4 it's not a hit yet
+	JP NC, _putMissile					;greater than 4 it's not a hit yet
 
 _checkCols
 	PUSH HL								;save our mrow pointer
 	INC HL								;HL still points to mrow, advance to mcol
 	LD A,(HL)							;retrieve mcol in A
-	LD (col), A							;init (col) for _putMissile <<<<<
+	;LD (col), A							;init (col) for _putMissile <<<<<
 	AND %11111000						;normalize to factor of 8
 	LD E, A								;save vcoff target in E from A
 	LD B, $0B							;iterate max of 11d times
@@ -429,7 +403,6 @@ __minner
 	LD (HL), 0							;kill this enemy
 	LD A, 1
 	LD (killFlag), A					;set kill flag
-	;putSprite explosion using vcoff (col), and vrow + (roff * 8) as (row)
 
 __mskiprow
 	LD A, (HL)							;stage rowscore for skipped; re-stage for killed
@@ -449,7 +422,7 @@ __mnextrow
 	LD (HL), $FF						;zero sum means this column destroyed; set flag
 
 __mpostmatch
-	POP DE								;recall our outer vcoff target	
+	POP DE								;recall our outer vcoff target (E) & roff (D)
 
 _cont
 	LD B,0
@@ -463,20 +436,18 @@ _cont
 	LD A, (killFlag)					;did we have an explosion?
 	CP 1
 	JR NZ, _putMissile					;No, we didn't
-	LD (HL), 0							;Else yes set mrow flag to 0
+	
+	;stop missile & put explosion
+	LD (HL), 0							;Else yes set mrow flag to 0 - stop missile
 	LD A, 0
 	LD (killFlag), A					;turn off kill flag
 
-	JR _putMissile
-
-_skipCol
-	INC HL								;HL still pointed at mrow
+_putMissile
+	LD A, (HL)							;HL points at mrow
+	LD (row), A
+	INC HL								;advance to mcol
 	LD A, (HL)
 	LD (col), A
-	JR _putMissile
-
-_putMissile
-	;arrive here with col & row init'd for putSprite
 	LD IX, missile
 	CALL putSprite
 	RET									;return to caller which was _eachMissile via _updMissile
