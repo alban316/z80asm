@@ -62,19 +62,19 @@ ltpart EQU rawInput + 3
 rtpart EQU rawInput + 4
 spriteShift EQU rawInput + 5
 framect EQU rawInput + 6
-__vcol EQU rawInput + 7
-vrow EQU rawInput + 8
-vmod EQU rawInput + 9
-pcol EQU rawInput + 10
-prow EQU rawInput + 11
-mrow EQU rawInput + 12
+vrow EQU rawInput + 7
+vmod EQU rawInput + 8
+pcol EQU rawInput + 9
+prow EQU rawInput + 10
+mrow EQU rawInput + 11
 ;leave 6 bytes for next var
-ileftmost EQU rawInput + 18
-irightmost EQU rawInput + 19
-vrightbound EQU rawInput + 20
-enemyCount EQU rawInput + 21
-tock EQU rawInput + 22
-killFlag EQU rawInput + 23
+brow EQU rawInput + 17
+;leave 6 bytes for next var
+enemyCount EQU rawInput + 23
+tock EQU rawInput + 24
+killFlag EQU rawInput + 25
+xcol EQU rawInput + 26
+xrow EQU rawInput + 27
 
 
 .ORG ProgStart - 2
@@ -113,14 +113,6 @@ initMrow:
 	INC HL
 	DJNZ initMrow
 
-	;init ileftmost, irightmost, vrightbound
-	LD HL, ileftmost
-	LD (HL), 0
-	LD HL, irightmost
-	LD (HL), $0A						;10d is zero-based right column index
-	LD HL, vrightbound
-	LD (HL), 7
-
 	;init numinvaders
 	;needs to match invaders array, btw
 	;entire game is hard-coded for 11 x 4
@@ -143,21 +135,25 @@ mainLoop:
 	CP 0
 	CALL Z, update						;if we've rolled-over 256 to 0 it's time to update & render
 										;later I might decouple update from render
+	
+	;but what is A after calling update??? could be anything right???
 	AND %00000111						;equivalent of A mod 8
 	CP 0
 	JR Z, getInput						;if 0, let's check for input
+	CP 4
+	JR Z, enemyBomb
 	JR mainLoop							;repeat
 
 getInput:
 	B_CALL(_GetCSC)						;check keypad input
 	CP skUp
-	JR Z, fireMissile
+	JP Z, fireMissile
 	CP skLeft
 	JR Z, playerLeft
 	CP skRight 
 	JR Z, playerRight
 	CP skClear
-	JP Z, playerQuit
+	JR Z, playerQuit
 	JR mainLoop
 	
 playerQuit:
@@ -182,7 +178,7 @@ playerLeft:
 playerRight:
 	LD A, (pcol)
 	CP $58								;rightmost boundary = 88d
-	JP Z, mainLoop						;do nothing & keep looping
+	JR Z, mainLoop						;do nothing & keep looping
 	LD B, 4
 	
 playerMove:
@@ -190,6 +186,82 @@ playerMove:
 	LD (pcol), A						;save updated position
 	CALL putPlayer						;update the screen buffer
 	JR mainLoop							;keep looping
+
+enemyBomb:
+	;this will be different than fireMissile
+	;in this case, enemies will drop all 3 in a row
+	;and not shoot again until all 3 have fallen
+	;we work backwards here to drop bombs from lowest invader row
+
+	LD HL, brow + 6				;pointer to end of brow, i.e. bcol3
+	PUSH HL						;push brow to stack
+	LD HL, invaders + $36		;start from the end cuz we wanna check rows from bottom up
+	LD B, $0B					;x11 outerloop
+	LD C, 3						;max 3 bomb count
+	LD A, (pcol)
+	ADD A, 8
+	LD D, A						;track pcol + 8 in D as comparison target
+
+_ebEachColumn
+	LD A, C
+	CP 0						;compare bomb count
+	JR Z, _ebNextCol
+	
+	;bomb count > 0
+	PUSH BC
+	LD B, 4						;x4 inner loop
+	LD E, 4						;bomb rownum counter
+	LD A, 0						;invader element flag (0) for compare
+
+__ebEachRow
+	CP (HL)						;compare element to zero
+	JR NZ, __ebNextRow			;non-zero we just skip
+	DEC E						;else decrement rownum counter
+
+__ebNextRow
+	DEC HL
+	DJNZ __ebEachRow
+	
+	;resume ebEachColumn
+	;HL should now be at vcoff for this column
+	LD A, $FF
+	CP (HL)						;$FF is flag for empty column
+	JR Z, _ebNoBomb
+	LD A, D						;stage comparison target from earlier
+	
+	;we wanna drop a bomb if target > vcoff
+	CP (HL)						;compare to vcoff element
+	JR Z, _ebYesBomb			;target = vcoff
+	JR NC, _ebYesBomb			;target > vcoff
+	JR C, _ebNoBomb				;target < vcoff
+	
+_ebYesBomb
+	POP BC						;recall outer count & uncover bcolN
+	LD A, (HL)					;current vcoff will become bcol
+	EX (SP), HL					;previously we pushed bcolN to the stack
+	LD (HL), A					;commit bcol
+	DEC HL						;pointing at brow
+	PUSH BC						;ugly extraneous push to re-preserve our outer count
+	LD A, (vrow)
+	LD B, E						;E still holds rownum
+	CALL plusTimes8				;compute brow as vrow + (rownum * 8)
+	POP BC						;pop our count back & uncover invaders element on stack
+	LD (HL), A					;commit brow
+	DEC HL						;leave it pointing at next bcol
+	EX (SP), HL					;swap bcolN back onto stack, retrieve invaders element
+	DEC C						;dec bomb count
+	DEC HL						;next rowbottom
+	JR _ebNextCol
+	
+_ebNoBomb
+	POP BC						;recall outer count
+	DEC HL						;next rowbottom
+
+_ebNextCol
+	DJNZ _ebEachColumn
+	POP HL						;pop bcol pointer off the stack
+
+	JP mainLoop
 
 fireMissile:
 	LD HL, mrow							;missile row, zer0 indicates inactive flag
@@ -206,7 +278,7 @@ _nextSilo:
 	DEC A								;decrement silo count
 	CP 0
 	JR NZ, _nextSilo					;not zero so go next silo
-	JR mainLoop
+	JP mainLoop
 
 _setMissile:
 	POP AF								;cleanup the previous push
@@ -214,7 +286,7 @@ _setMissile:
 	INC HL								;advance to mcol
 	LD A, (pcol)						;stage pcol for...
 	LD (HL), A							;init mcol at pcol
-	JR mainLoop
+	JP mainLoop
 
 update:
 	LD A, (vmod)
@@ -359,9 +431,9 @@ _updMissile:
 	CALL div_d_e						;quotient will be in D--this is row offset in invaders array
 	LD A, D								;stage quotient
 	CP 4								;compare to 4
-	JP Z, _checkCols					;equal 4 so g'head
-	JP C, _checkCols					;less than 4 that's ok too
-	JP NC, _putMissile					;greater than 4 it's not a hit yet
+	JR Z, _checkCols					;equal 4 so g'head
+	JR C, _checkCols					;less than 4 that's ok too
+	JR NC, _putMissile					;greater than 4 it's not a hit yet
 
 _checkCols
 	PUSH HL								;save our mrow pointer
@@ -376,6 +448,7 @@ _checkCols
 _checkCol
 	PUSH BC								;save our count
 	LD A, (HL)							;vcoff instance
+	;LD (xcol), A						;save xcol in case explosion --- this didn't work. Why?
 	AND %11111000						;normalize to factor of 8
 	CP E								;vcoff instance matches vcoff target?
 	JR Z, _match						;if yes, process target row in this column
@@ -403,6 +476,14 @@ __minner
 	LD (HL), 0							;kill this enemy
 	LD A, 1
 	LD (killFlag), A					;set kill flag
+	
+	;compute xrow from this row
+	PUSH BC
+	LD A, (vrow)
+	LD B, D
+	CALL plusTimes8
+	LD (xrow), A
+	POP BC
 
 __mskiprow
 	LD A, (HL)							;stage rowscore for skipped; re-stage for killed
@@ -418,7 +499,7 @@ __mnextrow
 	POP HL								;recall vcoff pointer
 	LD A, E								;stage cumulative sum
 	CP 0
-	JP NZ, __mpostmatch					;non-zero sum means still enemies here
+	JR NZ, __mpostmatch					;non-zero sum means still enemies here
 	LD (HL), $FF						;zero sum means this column destroyed; set flag
 
 __mpostmatch
@@ -441,6 +522,15 @@ _cont
 	LD (HL), 0							;Else yes set mrow flag to 0 - stop missile
 	LD A, 0
 	LD (killFlag), A					;turn off kill flag
+	
+	INC HL								;advance to mcol
+	LD A, (HL)
+	LD (col), A							;load col with mcol
+	LD A, (xrow)						;recall xrow from earlier kill-time calculation
+	LD (row), A
+	LD IX, explosion
+	CALL putSprite
+	RET									;return to caller which was _eachMissile 
 
 _putMissile
 	LD A, (HL)							;HL points at mrow
@@ -451,6 +541,13 @@ _putMissile
 	LD IX, missile
 	CALL putSprite
 	RET									;return to caller which was _eachMissile via _updMissile
+
+plusTimes8
+	;A should hold the base amount (or zero) to be added to
+	;BC should contain the *n amount
+	ADD A, 8
+	DJNZ plusTimes8
+	RET
 
 putInvaders:
 	;point to invaders
@@ -467,7 +564,7 @@ _putInvaderCol:
 	PUSH BC								;preserve iteration (outer) count
 	LD A, (HL)							;get vcoff for this column
 	CP $FF								;$FF is flag for empty column
-	JP Z, _skipInvader					;is it FF? don't process it
+	JR Z, _skipInvader					;is it FF? don't process it
 	LD D, A								;else we use D to hold vcoff
 	LD A, (vrow)
 	LD E, A								;initial vrow will become vroff
