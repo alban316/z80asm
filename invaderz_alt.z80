@@ -155,8 +155,8 @@ mainLoop:
 
 getInput:
 	B_CALL(_GetCSC)						;check keypad input
-	CP skUp
-	JP Z, fireMissile
+	;CP skUp
+	;JP Z, fireMissile
 	CP skLeft
 	JR Z, playerLeft
 	CP skRight 
@@ -202,7 +202,7 @@ enemyBomb:
 	;and not shoot again until all 3 have fallen
 	;we work backwards here to drop bombs from lowest invader row
 
-	LD HL, brow + 5				;pointer to end of brow, i.e. bcol3
+	LD HL, brow + 6				;pointer to end of brow, i.e. bcol3
 	PUSH HL						;push brow to stack
 	LD HL, invaders + $36		;start from the end cuz we wanna check rows from bottom up
 	LD B, $0B					;x11 outerloop
@@ -274,30 +274,6 @@ _ebNextCol
 
 	JP mainLoop
 
-fireMissile:
-	LD HL, mrow							;missile row, zer0 indicates inactive flag
-	LD A, 3								;we have 3 "slots" or silos available for missiles
-
-_nextSilo:
-	PUSH AF								;save our silo count
-	LD A, (HL)
-	CP 0								;is this silo ready? == 0?
-	JR Z, _setMissile					;if so, launch a missile here!
-	INC HL								;inc 1x brings us to mcol which we don't need right now
-	INC HL								;inc 2x to get next mrow
-	POP AF								;recall our silo count
-	DEC A								;decrement silo count
-	CP 0
-	JR NZ, _nextSilo					;not zero so go next silo
-	JP mainLoop
-
-_setMissile:
-	POP AF								;cleanup the previous push
-	LD (HL), $38						;init mrow at line 56d
-	INC HL								;advance to mcol
-	LD A, (pcol)						;stage pcol for...
-	LD (HL), A							;init mcol at pcol
-	JP mainLoop
 
 update:
 	LD A, (vmod)
@@ -386,7 +362,7 @@ __updCont
 render:
 	CALL clearGrBuffer
 	CALL putPlayer
-	CALL putMissiles
+	;CALL putMissiles
 	
 	LD A, (bdrop)
 	CP 0
@@ -410,153 +386,6 @@ putPlayer:
 	CALL putSprite
 	RET
 
-putMissiles:
-	LD HL, mrow							;pointer to mrow array (3 elements of 2b each)
-	LD B, 3
-
-_eachMissile:
-	PUSH BC								;save our B location for DJNZ
-	LD A, (HL)							;mrow
-	CP 0								;is this missile in flight? Zer0 = No
-	PUSH HL								;save our pointer before we call updMissile
-	CALL NZ, _updMissile				;Non-zero = Yes
-	POP HL								;whether we called updMissile or not, get our ptr back
-	INC HL
-	INC HL								;2x INC gets us to next mrow
-	POP BC								;pop our counter
-	DJNZ _eachMissile
-	RET
-
-_updMissile:
-										;HL already points to current mrow index
-										;A already has (HL) value i.e. mrow value
-	SUB 4								;move missile -4px (upward on screen)
-	LD (HL), A							;commit the update to mrow
-	RET Z								;if we're at 0 - exit
-	;LD (row), A							;init (row) for _putMissile <<<<<
-	
-;begin collision check
-	;check row - is mrow even high enough to hit?
-	LD A, (vrow)
-	LD B, A								;stage vrow in B
-	LD A, (HL)							;retrieve mrow in A
-	SUB B								;subtract vrow from mrow
-	LD D, A								;load dividend to D
-	LD E, 8								;load divisor to E
-	CALL div_d_e						;quotient will be in D--this is row offset in invaders array
-	LD A, D								;stage quotient
-	CP 4								;compare to 4
-	JR Z, _checkCols					;equal 4 so g'head
-	JR C, _checkCols					;less than 4 that's ok too
-	JR NC, _putMissile					;greater than 4 it's not a hit yet
-
-_checkCols
-	PUSH HL								;save our mrow pointer
-	INC HL								;HL still points to mrow, advance to mcol
-	LD A,(HL)							;retrieve mcol in A
-	;LD (col), A							;init (col) for _putMissile <<<<<
-	AND %11111000						;normalize to factor of 8
-	LD E, A								;save vcoff target in E from A
-	LD B, $0B							;iterate max of 11d times
-	LD HL, invaders
-
-_checkCol
-	PUSH BC								;save our count
-	LD A, (HL)							;vcoff instance
-	;LD (xcol), A						;save xcol in case explosion --- this didn't work. Why?
-	AND %11111000						;normalize to factor of 8
-	CP E								;vcoff instance matches vcoff target?
-	JR Z, _match						;if yes, process target row in this column
-	JR _cont							;no match, go next
-
-_match
-	PUSH DE								;save our vcoff & roff target
-	PUSH HL								;save HL vcoff pointer
-	LD E, 0								;we will use E to track sum of this column
-	LD B, 4								;iterate x4 times inner loop
-	LD A, 0								;count up to D rows (from begin collision check)
-	
-__minner
-	PUSH AF
-	INC HL								;go to first or next spoff
-	CP D								;is this our row? D saved earlier
-	JR NZ, __mskiprow					;No, this is not our row
-	
-	;yes, this row
-	LD A, (HL)							;Yes, this row (stage rowscore)
-	CP 0								;Is it already dead?
-	JR Z, __mnextrow					;Yes, already dead
-	
-	;no, not dead kill it
-	LD (HL), 0							;kill this enemy
-	LD A, 1
-	LD (killFlag), A					;set kill flag
-	
-	;compute xrow from this row
-	PUSH BC
-	LD A, (vrow)
-	LD B, D
-	CALL plusTimes8
-	LD (xrow), A
-	POP BC
-
-__mskiprow
-	LD A, (HL)							;stage rowscore for skipped; re-stage for killed
-
-__mnextrow
-	ADD A, E							;compute running total
-	LD E, A								;commit total
-	POP AF
-	INC A								;+= 1 rowcount
-	DJNZ __minner
-	
-	;resume outer loop, post-match
-	POP HL								;recall vcoff pointer
-	LD A, E								;stage cumulative sum
-	CP 0
-	JR NZ, __mpostmatch					;non-zero sum means still enemies here
-	LD (HL), $FF						;zero sum means this column destroyed; set flag
-
-__mpostmatch
-	POP DE								;recall our outer vcoff target (E) & roff (D)
-
-_cont
-	LD B,0
-	LD C,5
-	ADD HL, BC							;advance 5 bytes to next vcoff
-	POP BC								;recall our outer count
-	DJNZ _checkCol						;outer loop!!
-	
-	;resume _checkCols, all loops completed
-	POP HL								;recall mrow
-	LD A, (killFlag)					;did we have an explosion?
-	CP 1
-	JR NZ, _putMissile					;No, we didn't
-	
-	;stop missile & put explosion
-	LD (HL), 0							;Else yes set mrow flag to 0 - stop missile
-	LD A, 0
-	LD (killFlag), A					;turn off kill flag
-	
-	INC HL								;advance to mcol
-	LD A, (HL)
-	LD (col), A							;load col with mcol
-	LD A, (xrow)						;recall xrow from earlier kill-time calculation
-	LD (row), A
-	LD IX, explosion
-	CALL putSprite
-	RET									;return to caller which was _eachMissile 
-
-_putMissile
-	LD A, (HL)							;HL points at mrow
-	LD (row), A
-	INC HL								;advance to mcol
-	LD A, (HL)
-	LD (col), A
-	LD IX, missile
-	CALL putSprite
-	RET									;return to caller which was _eachMissile via _updMissile
-
 plusTimes8
 	;A should hold the base amount (or zero) to be added to
 	;BC should contain the *n amount
@@ -573,23 +402,21 @@ _pbInner
 	;for each row
 	LD A, $38							;boundary is brow <= 56d
 	CP (HL)
-	JR Z, _pbPut						;A (boundary) = brow, it's ok
-	JR NC, _pbPut						;A (boundary) > brow, it's ok
+	JR Z, _pbSkip						;A (boundary) = brow, it's ok
+	JR NC, _pbSkip						;A (boundary) > brow, it's ok
 	JR C, _pbSkip						;A (boundary) < brow, boundary exceeded not ok
 
 _pbPut
 	LD A, (HL)							;value of brow
 	LD (row), A							;this iteration will render at current location
-	ADD A, 1							;+=1 for next iteration
+	ADD A, 2							;+=2 for next iteration
 	LD (HL), A							;commit back to RAM
 	INC HL								;advance to bcol
-	LD A, (HL)							;value of bcol
-	LD (col), A							;render at this location
+	LD A, (HL)
+	LD (col), A
 	LD IX, bomb
 	PUSH HL								;preserve pointer cuz putSprite will lose it
-	PUSH BC								;preserve counter cuz putSprite will lose it
 	CALL putSprite
-	POP BC								;recall counter
 	POP HL								;recall pointer
 	JR _pbCont
 
@@ -902,11 +729,11 @@ player:
 
 missile:
 .DB %00000000
+.DB %00001000
+.DB %00001000
+.DB %00001000
 .DB %00000000
-.DB %00001000
-.DB %00001000
-.DB %00001000
-.DB %00001000
+.DB %00000000
 .DB %00000000
 .DB %00000000
 
@@ -923,11 +750,11 @@ explosion:
 bomb:
 .DB %00000000
 .DB %00000000
-.DB %00000000
 .DB %00011100
-.DB %00001000
-.DB %00000000
-.DB %00000000
+.DB %00111110
+.DB %00111110
+.DB %00111110
+.DB %00011100
 .DB %00000000
 
 ;why not write these as binary masks since that's what they're used for??? <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOOK
